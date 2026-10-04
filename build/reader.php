@@ -103,7 +103,12 @@ function reader_body(array $b, string $root = ''): string
         'dl'      => $streamUrl . '&dl=1',
         'archive' => $archive,
         'title'   => (string) $b['Title'],
-    ], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+    // JSON_HEX_TAG matters: this is interpolated into a <script> element, and
+      // the HTML parser ends that element at the first `</script` regardless of
+      // JS quoting. An Archive.org title containing `</script><img onerror=...>`
+      // would otherwise become stored XSS on every reader page. Titles are
+      // harvested metadata, not vetted input.
+      ], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_HEX_TAG);
 
     $h = '<section class="reader-shell">'
         . '<div class="reader-top">'
@@ -257,7 +262,7 @@ function reader_body(array $b, string $root = ''): string
         . '      a.href = CFG.archive;'
         . '      a.target = "_blank";'
         . '      a.rel = "noopener noreferrer";'
-        . '      a.textContent = "Read it on Archive.org instead";'
+        . '      a.textContent = "Read it on Archive.org";'
         . '      none.appendChild(a);'
         . '      none.appendChild(document.createTextNode("."));'
         . '    }'

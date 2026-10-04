@@ -9,6 +9,8 @@
 // real layout engine.
 
 import { chromium, READER_URL, BASE, require } from '../browser.mjs'
+import { readFileSync } from 'node:fs'
+import { execFileSync } from 'node:child_process'
 
 // Text-layer quality varies wildly between Archive.org scans, so the fixture is
 // chosen for what its PDF actually extracts, not for convenience:
@@ -83,20 +85,21 @@ async function testReaderScriptParses() {
   ok(Boolean(m), 'reader page carries a module script')
   if (!m) return
 
-  const src = m[1]
-  // Strip static imports: they cannot be evaluated outside a module, and their
-  // presence is not what this check is about. The `m` flag alone is not enough -
-  // reader.php emits the first import after a newline but the rest of the body
-  // on one line, so anchor on a leading statement too.
-  // The rest is compiled but not run, so a stray backtick or unbalanced brace in
-  // a PHP comment surfaces here instead of killing the whole reader module in
-  // the browser, where it presents as every other assertion timing out.
-  // reader.php concatenates the whole module into one line, so a `//` comment in
-  // the generated JS would swallow everything after it - and a `//` also occurs
-  // harmlessly inside strings (the archive.org URL). Rewrite both forms before
-  // parsing: strings become placeholders, line comments are stripped, and the
-  // placeholders are restored afterwards.
-  let body = src
+const src = m[1]
+    // Strip static imports: they cannot be evaluated outside a module, and their
+    // presence is not what this check is about. The `m` flag alone is not enough -
+    // reader.php emits the first import after a newline but the rest of the body
+    // on one line, so anchor on a leading statement too.
+    //
+    // The rest is compiled but not run, so a stray backtick or unbalanced brace in
+    // a PHP comment surfaces here instead of killing the whole reader module in
+    // the browser, where it presents as every other assertion timing out.
+    //
+    // reader.php concatenates the whole module onto one line, so a `//` comment in
+    // the generated JS swallows everything after it - and a `//` also occurs
+    // harmlessly inside strings (the archive.org URL). Strings become placeholders,
+    // line comments are stripped, then the placeholders are restored.
+    let body = src
     .replace(/^\s*import\s[^;]*;/gm, '')
     .replace(/^import\s[^;]*;/, '')
   const literals = []
@@ -116,6 +119,37 @@ async function testReaderScriptParses() {
     ok(false, 'reader script parses as valid JavaScript',
       `${String(err && err.message)} (at char ${(err && err.stack ? String(err.stack).match(/<anonymous>:1:(\d+)/)?.[1] : '?')})`)
   }
+}
+
+// The CFG constant is interpolated into a <script> element. The HTML parser ends
+// that element at the first `</script` whatever JS quoting says, so a catalogue
+// title carrying `</script>` becomes markup - stored XSS on every reader page,
+// from harvested Archive.org metadata. Titles are not vetted input.
+function testCfgEscaping() {
+  console.log('\nCFG escaping')
+// Encoded by PHP itself, not by a JS reimplementation: JSON_HEX_TAG is a
+  // PHP-only constant and its value here is 1, which collides with a JS flag,
+// so asserting from JS would test the wrong thing entirely.
+//
+// The flags are passed as a PHP *expression* rather than a bitmask integer, so
+// this test reads the same constants reader.php uses and cannot drift from it.
+const phpJsonEncode = (s, flagsExpr) => execFileSync(
+  '/run/media/jatt/9890EF3990EF1C8E/devstack/php-pdo.sh',
+  ['-r', `echo json_encode($argv[1], ${flagsExpr});`, s],
+  { encoding: 'utf8' })
+
+  const hostile = '</script><img src=x onerror=alert(1)>'
+  const unsafe = phpJsonEncode(hostile, 'JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES')
+  ok(unsafe.includes('</script>'),
+    'PHP encoding without JSON_HEX_TAG emits a literal </script> (documents the risk)', unsafe)
+  const safe = phpJsonEncode(hostile,
+    'JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_HEX_TAG')
+  ok(!safe.includes('</script>'),
+    'PHP encoding with JSON_HEX_TAG escapes it', safe)
+  ok(safe.includes('\\u003C'), 'the angle bracket is emitted as \\u003C', safe)
+
+  const php = readFileSync(new URL('../../build/reader.php', import.meta.url).pathname, 'utf8')
+  ok(/JSON_HEX_TAG/.test(php), 'reader.php passes JSON_HEX_TAG to json_encode')
 }
 
 async function testSelection() {
@@ -656,6 +690,7 @@ async function testFallback() {
 
 const GROUPS = {
   script: testReaderScriptParses,
+  escaping: testCfgEscaping,
   selection: testSelection,
   index: testIndex,
   find: testFind,
