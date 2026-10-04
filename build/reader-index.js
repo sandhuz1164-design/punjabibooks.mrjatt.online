@@ -70,3 +70,30 @@ export function pageText(map, n) {
   const entry = map.get(n)
   return entry ? entry.text : ''
 }
+
+/**
+ * Every occurrence of `term`, as {page, index, length}, sorted by page then
+ * position. An empty term matches nothing rather than every position.
+ *
+ * The term is matched against the space-joined page text, so a phrase split
+ * across two text items still matches. Offsets address that joined string.
+ *
+ * No case folding and no Unicode normalisation: the corpus is Gurmukhi and
+ * folding would both miss real variants and invent matches that are not there.
+ * Callers wanting a case-insensitive search pass a lowercased term.
+ */
+export function findAll(map, term, numPages) {
+  if (!term) return []
+  const hits = []
+  const limit = Math.min(numPages ?? map.size, map.size)
+  for (let n = 1; n <= limit; n++) {
+    const text = pageText(map, n)
+    if (!text) continue
+    let from = text.indexOf(term)
+    while (from !== -1) {
+      hits.push({ page: n, index: from, length: term.length })
+      from = text.indexOf(term, from + term.length)
+    }
+  }
+  return hits
+}

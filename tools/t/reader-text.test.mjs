@@ -10,9 +10,22 @@
 
 import { chromium, READER_URL, BASE, require } from '../browser.mjs'
 
-// 68 pages, and its PDF carries an embedded text layer, so it is the fixture for
-// everything that needs searchable text.
-const TEXT_PID = 'HarpalSinghPannu-7KUFixXT'
+// Text-layer quality varies wildly between Archive.org scans, so the fixture is
+// chosen for what its PDF actually extracts, not for convenience:
+//
+//   punjabi-vyakaran-te-rachnawali  clean Gurmukhi, 62 Gurmukhi chars on page 1
+//   HarpalSinghPannu-7KUFixXT       68pp, extracts mojibake (bytes, not glyphs)
+//   MahanKosh-VolumeOne             English running head only, 674 pages
+//
+// The first is the searchable-text fixture. The second was the original choice
+// and was wrong: its "no Gurmukhi run in this fixture" skip was hiding a real
+// defect rather than an absent test case.
+const TEXT_PID = 'punjabi-vyakaran-te-rachnawali'
+
+// Extracts text, but as mojibake: the PDF's font has no usable ToUnicode map.
+// Search across it must still work (the bytes are consistent and searchable),
+// which is what GURMUKHI_UNRELIABLE_PID pins.
+const MOJIBAKE_PID = 'HarpalSinghPannu-7KUFixXT'
 
 let pass = 0
 let fail = 0
@@ -157,87 +170,156 @@ async function testFind() {
     const live = await page.getAttribute('#findCount', 'aria-live')
     eq(live, 'polite', 'counter is a polite live region')
 
-    // Pick a real word out of the index instead of hardcoding one, so the test
-    // cannot rot when the fixture changes.
+    // Derive the search term from the index rather than hardcoding one, so the
+    // test cannot rot when the fixture changes. Scans every page, not just
+    // page 1: this fixture's page 1 is a title page.
+    //
+    // Prefers the longest run of letters in either script - this corpus is
+    // Gurmukhi, so demanding [A-Za-z] would have found nothing on all 380 pages
+    // and quietly skipped the case that matters most.
     const term = await page.evaluate(() => {
-      const m = window.__readerIndex
-      for (const [, v] of m) {
-        const w = (v.text || '').match(/[A-Za-z]{5,}/)
-        if (w) return w[0]
+      const letters = /[A-Za-z]{5,}|[\u0A00-\u0A7F]{4,}/gu
+      const counts = new Map()
+      for (const [, v] of window.__readerIndex) {
+        for (const m of (v.text || '').match(letters) || []) {
+          counts.set(m, (counts.get(m) || 0) + 1)
+        }
       }
-      return ''
+      // Prefer a term with several occurrences, so next/prev has two targets.
+      let best = '', bestN = 0
+      for (const [w, n] of counts) {
+        if (n > bestN || (n === bestN && w.length > best.length)) { best = w; bestN = n }
+      }
+      return { word: best, count: bestN, script: /[\u0A00-\u0A7F]/.test(best) ? 'gurmukhi' : 'latin' }
     })
-    ok(term.length >= 5, 'found a searchable word in the index', term)
+    ok(term.word.length >= 4, 'found a searchable term in the index',
+      `${JSON.stringify(term.word)} x${term.count} (${term.script})`)
+    ok(term.count >= 2, 'the chosen term occurs at least twice', `x${term.count}`)
 
-    await page.fill('#findInput', term)
+    await page.fill('#findInput', term.word)
     await page.waitForFunction(() => /\d+ of \d+/.test(
       document.getElementById('findCount').textContent), null, { timeout: 20000 })
     const countText = await page.textContent('#findCount')
     const m = countText.match(/(\d+) of (\d+)/)
-    ok(m && Number(m[2]) > 0, 'ASCII term matches', countText)
+    ok(m && Number(m[2]) > 0, 'term matches', countText)
+    ok(Number(m[1]) === 1, 'counter starts at the first match', countText)
 
     const firstPage = await page.evaluate((t) => {
       const hits = window.findAll(window.__readerIndex, t, window.__readerDoc.numPages)
       return hits.length ? hits[0].page : null
-    }, term)
+    }, term.word)
     ok(firstPage !== null, 'findAll returns a page for the term')
+    eq(Number(await page.inputValue('#pgNum')), firstPage,
+      'the reader jumped to that page')
 
-    // Gurmukhi must round-trip: no normalisation may alter it. Review Focus #3.
+    // Gurmukhi must round-trip byte-for-byte. Review Focus #3. Asserted as a
+    // hard failure, not a skip: this fixture is all Gurmukhi on all 380 pages,
+    // so "no Gurmukhi found" means the search path dropped the script.
     const gurmukhi = await page.evaluate(() => {
-      const re = /[਀-੿]{4,}/g
       for (const [, v] of window.__readerIndex) {
-        const hit = (v.text || '').match(re)
+        const hit = (v.text || '').match(/[\u0A00-\u0A7F]{4,}/)
         if (hit) return hit[0]
       }
       return ''
     })
-    if (gurmukhi) {
-      const gHits = await page.evaluate((t) =>
-        window.findAll(window.__readerIndex, t, window.__readerDoc.numPages).length, gurmukhi)
-      ok(gHits > 0, 'Gurmukhi term matches byte-for-byte', `${gurmukhi} -> ${gHits} hits`)
-    } else {
-      console.log('  skip Gurmukhi case: no Gurmukhi run in this fixture')
-    }
+    ok(gurmukhi.length >= 4, 'fixture yields a Gurmukhi term', JSON.stringify(gurmukhi))
+    const gHits = await page.evaluate((t) =>
+      window.findAll(window.__readerIndex, t, window.__readerDoc.numPages).length, gurmukhi)
+    ok(gHits > 0, 'Gurmukhi term matches byte-for-byte', `${gurmukhi} -> ${gHits} hits`)
 
-    // A term spanning two text items. Review Focus #4.
-    const across = await page.evaluate(() => {
-      const page1 = window.__readerIndex.get(1)
-      const its = page1.items
-      for (let i = 0; i < its.length - 1; i++) {
-        const a = (its[i].str || '').replace(/\s+$/, '')
-        const b = (its[i + 1].str || '').replace(/^\s+/, '')
-        if (a.length >= 2 && b.length >= 2) return a.slice(-3) + b.slice(0, 3)
+    // A Latin-digit Gurmukhi mix must survive too.
+    const mixed = await page.evaluate(() => {
+      for (const [, v] of window.__readerIndex) {
+        const hit = (v.text || '').match(/[\u0A00-\u0A7F]+\s?\d+/)
+        if (hit) return hit[0]
       }
       return ''
     })
-    if (across) {
-      const aHits = await page.evaluate((t) =>
-        window.findAll(window.__readerIndex, t, window.__readerDoc.numPages).length, across)
-      ok(aHits > 0, 'term spanning two items is found', `${across} -> ${aHits}`)
+    if (mixed) {
+      const mHits = await page.evaluate((t) =>
+        window.findAll(window.__readerIndex, t, window.__readerDoc.numPages).length, mixed)
+      ok(mHits > 0, 'mixed Gurmukhi+digits term matches', `${mixed} -> ${mHits}`)
     } else {
-      console.log('  skip cross-item case: fixture has no adjacent item pair')
+      console.log('  note: no Gurmukhi+digits pair in this fixture')
     }
 
-    // Next/prev must move between matches.
+    // A term spanning two text items. Review Focus #4.
+    //
+    // PDF.js emits inter-word spaces as their own one-character items (" "), so
+    // a join boundary never lands mid-word - a real line wrap happens *inside* an
+    // item's str, not between items. The cross-item case that genuinely exists
+    // is therefore two adjacent non-space items separated by the join space, and
+    // the term has to include that space to match.
+    const across = await page.evaluate(() => {
+      for (const [, pt] of window.__readerIndex) {
+        const its = pt.items
+        for (let i = 0; i < its.length - 1; i++) {
+          const a = its[i].str.replace(/\s+$/, '')
+          const b = its[i + 1].str.replace(/^\s+/, '')
+          if (its[i + 1].str.trim() === '') continue   // a real gap, not adjacent
+          if (a.length < 3 || b.length < 3) continue
+          if (!/[\p{L}]/u.test(a) || !/[\p{L}]/u.test(b)) continue
+          const term = a.slice(-3) + ' ' + b.slice(0, 3)
+          if (pt.text.includes(term)) return term
+        }
+      }
+      return ''
+    })
+    ok(across.length > 0, 'fixture offers two adjacent word items', JSON.stringify(across))
+    const aHits = await page.evaluate((t) =>
+      window.findAll(window.__readerIndex, t, window.__readerDoc.numPages).length, across)
+    ok(aHits > 0, 'term spanning the join between two items is found',
+      `${JSON.stringify(across)} -> ${aHits}`)
+
+    // Next/prev must move between matches. Typing already jumps to match 1, so
+    // the first click lands on match 2 - these assertions start from there.
     const navigated = await page.evaluate(async () => {
-      const inp = document.getElementById('findInput')
-      const t = inp.value
+      const t = document.getElementById('findInput').value
       const hits = window.findAll(window.__readerIndex, t, window.__readerDoc.numPages)
       if (hits.length < 2) return { skipped: true, hits: hits.length }
+      const at = () => Number(document.getElementById('pgNum').value)
+      const start = at()
       document.getElementById('findNext').click()
-      await new Promise((r) => setTimeout(r, 400))
-      const after1 = window.__readerPage
+      await new Promise((r) => setTimeout(r, 500))
+      const after1 = at()
+      document.getElementById('findPrev').click()
+      await new Promise((r) => setTimeout(r, 500))
+      const back = at()
       document.getElementById('findNext').click()
-      await new Promise((r) => setTimeout(r, 400))
-      const after2 = window.__readerPage
-      return { skipped: false, after1, after2, p1: hits[0].page, p2: hits[1].page }
+      await new Promise((r) => setTimeout(r, 500))
+      const after2 = at()
+      const atLabel = () => document.getElementById('findCount').textContent
+      const labelAfter1 = atLabel()
+      document.getElementById('findPrev').click()
+      await new Promise((r) => setTimeout(r, 500))
+      const labelAfterPrev = atLabel()
+      return { skipped: false, start, after1, after2, back,
+        labelAfter1, labelAfterPrev,
+        p1: hits[0].page, p2: hits[1].page }
     })
     if (navigated.skipped) {
-      console.log('  skip next/prev case: fewer than 2 matches')
+      ok(false, 'chosen term has at least two matches', `only ${navigated.hits}`)
     } else {
-      eq(navigated.after1, navigated.p1, 'findNext jumps to the first match page')
-      eq(navigated.after2, navigated.p2, 'findNext advances to the second match page')
+      eq(navigated.start, navigated.p1, 'typing already jumped to match 1')
+      eq(navigated.after1, navigated.p2, 'findNext advances to match 2')
+      eq(navigated.back, navigated.start, 'findPrev returns to match 1')
+      ok(/^2 of \d+$/.test(navigated.labelAfter1), 'counter reads 2 after one step',
+        navigated.labelAfter1)
+      ok(/^1 of \d+$/.test(navigated.labelAfterPrev), 'counter reads 1 after stepping back',
+        navigated.labelAfterPrev)
     }
+
+    // Escape and the clear button must both empty the search.
+    const cleared = await page.evaluate(async () => {
+      document.getElementById('findClear').click()
+      await new Promise((r) => setTimeout(r, 200))
+      return {
+        value: document.getElementById('findInput').value,
+        count: document.getElementById('findCount').textContent.trim(),
+      }
+    })
+    eq(cleared.value, '', 'clear empties the box')
+    eq(cleared.count, '', 'clear empties the counter')
 
     eq(errors.length, 0, 'no console errors', errors.join(' | '))
   })
@@ -310,7 +392,7 @@ async function testFallback() {
       try {
         await page.goto(READER_URL(pid), { waitUntil: 'domcontentloaded', timeout: 60000 })
         await page.waitForFunction(() => window.__readerReady === true, null, { timeout: 60000 })
-        await page.waitForFunction(() => window.__indexDone === true, null, { timeout: 60000 })
+        await page.waitForFunction(() => window.__indexDone === true, null, { timeout: 120000 })
         const total = await page.evaluate(() => {
           let n = 0
           for (const [, v] of window.__readerIndex) if ((v.text || '').trim()) n++

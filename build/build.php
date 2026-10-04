@@ -394,10 +394,12 @@ foreach ($books as $b) {
                 'nav'       => $nav,
                 // Reader pages should not compete with the book page in search.
                 'head'      => '<meta name="robots" content="noindex,follow">' . "\n"
-                    // Selection needs PDF.js's .textLayer rules, which are not part
-                    // of the site stylesheet.
+                            // Selection needs PDF.js's .textLayer rules, which are not part
+                // of the site stylesheet.
                     . '<link rel="stylesheet" href="' . $root
-                    . 'assets/vendor/pdfjs/textlayer.css">' . "\n",
+                    . 'assets/vendor/pdfjs/textlayer.css">' . "\n"
+                    . '<link rel="stylesheet" href="' . $root
+                    . 'assets/css/reader-find.css">' . "\n",
                 // Reading is the whole job here: drop the site header and footer
                 // so the reader's own toolbar is the only chrome.
                 'body_class' => 'is-reader',
