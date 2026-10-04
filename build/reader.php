@@ -209,6 +209,46 @@ function reader_body(array $b, string $root = ''): string
         . '  if (hitAt >= 0) { if (hits[0].page === page) paintHighlight(hits[0]); else go(hits[0].page); }'
         . '  else clearHighlights();'
         . '}'
+        // Decide whether this book can be searched at all.
+        //
+        // Only once indexing has finished: while it is still running, "no page
+        // has text yet" is true of every book, and disabling the box then would
+        // flash a false "this scan has no searchable text" at every reader. The
+        // in-progress state is left alone until there is an answer.
+        //
+        // 40 letters on a page is the bar: an image-only scan still emits stray
+        // punctuation and page numbers, which would otherwise read as "text
+        // found" and leave find permanently enabled over an empty book.
+        . 'const MIN_TEXT_CHARS = 40;'
+        . 'function pageHasText(pt) {'
+        . '  const letters = (pt.text || "").match(/\\p{L}/gu);'
+        . '  return !!letters && letters.length >= MIN_TEXT_CHARS;'
+        . '}'
+        . 'function settleFindBox() {'
+        . '  const none = $("findNone");'
+        . '  if (!window.__indexDone) return;'
+        . '  let withText = 0;'
+        . '  for (const [, pt] of window.__readerIndex) if (pageHasText(pt)) withText++;'
+        . '  const searchable = withText > 0;'
+        . '  findInput.disabled = !searchable;'
+        . '  none.hidden = searchable;'
+        . '  if (!searchable) {'
+        . '    findInput.value = "";'
+        . '    runFind("");'
+        . '    none.textContent = "";'
+        . '    none.appendChild(document.createTextNode("This scan has no searchable text."));'
+        . '    if (CFG.archive) {'
+        . '      none.appendChild(document.createTextNode(" "));'
+        . '      const a = document.createElement("a");'
+        . '      a.href = CFG.archive;'
+        . '      a.target = "_blank";'
+        . '      a.rel = "noopener noreferrer";'
+        . '      a.textContent = "Read it on Archive.org instead";'
+        . '      none.appendChild(a);'
+        . '      none.appendChild(document.createTextNode("."));'
+        . '    }'
+        . '  }'
+        . '}'
         . 'function paintCount() {'
         . '  findCount.textContent = hits.length'
         . '    ? (hitAt + 1) + " of " + hits.length'
@@ -297,6 +337,7 @@ function reader_body(array $b, string $root = ''): string
         . '    buildIndex(doc, { signal: idxAbort }).then((m) => {'
         . '      window.__readerIndex = m;'
         . '      window.__indexDone = true;'
+        . '      settleFindBox();'
         // A search typed while indexing was still running must now be answered.
         . '      if (findInput.value) runFind(findInput.value);'
         . '    });'

@@ -412,43 +412,25 @@ async function testFallback() {
 
   // Find a book with no embedded text layer, so the fallback case is real rather
   // than asserted against a made-up PID.
-  const pids = JSON.parse(execFileSync('/run/media/jatt/9890EF3990EF1C8E/devstack/php-pdo.sh', [
-    '-r',
-    `require '/home/jatt/BookStore-v2/db.php';
-     $p = db()->query("SELECT PID FROM products WHERE PdfSize>0 AND PdfSize<=419430400
-                       ORDER BY PdfSize DESC LIMIT 40")->fetchAll(PDO::FETCH_COLUMN);
-     echo json_encode($p);`,
-  ], { encoding: 'utf8' }))
+  // A book whose PDF carries no extractable text.
+  //
+  // Read from a checked-in fixture rather than hunted for at test time. The
+  // first version of this test opened up to 40 reader pages looking for a
+  // candidate, each waiting on a full index: it ran past 15 minutes and had to be
+  // killed. "Which books lack a text layer" is a property of the corpus, so
+  // tools/t/probe-text-layers.mjs answers it once, on demand, and the answer is
+  // committed. Regenerate with:
+  //   node tools/t/probe-text-layers.mjs 24 > tools/t/no-text-pids.json
+  const { readFileSync } = require('node:fs')
+  const here = new URL('.', import.meta.url).pathname
+  const noTextPids = JSON.parse(readFileSync(here + 'no-text-pids.json', 'utf8'))
 
-  let noTextPid = null
-  const browser = await chromium.launch()
-  try {
-    for (const pid of pids) {
-      const page = await browser.newPage({ viewport: { width: 1280, height: 900 } })
-      try {
-        await page.goto(READER_URL(pid), { waitUntil: 'domcontentloaded', timeout: 60000 })
-        await page.waitForFunction(() => window.__readerReady === true, null, { timeout: 60000 })
-        await page.waitForFunction(() => window.__indexDone === true, null, { timeout: 120000 })
-        const total = await page.evaluate(() => {
-          let n = 0
-          for (const [, v] of window.__readerIndex) if ((v.text || '').trim()) n++
-          return n
-        })
-        if (total === 0) { noTextPid = pid; break }
-      } catch {
-        // Skip books this browser session cannot open; they are not the subject.
-      } finally {
-        await page.close()
-      }
-    }
-  } finally {
-    await browser.close()
-  }
+  ok(noTextPids.length > 0, 'fixture names a readable book with no text layer',
+    `${noTextPids.length} such books`)
 
-  ok(noTextPid !== null, 'found a readable book with no text layer to test against',
-    `scanned ${pids.length} candidates`)
-
-  if (noTextPid) {
+  if (noTextPids.length) {
+    const noTextPid = noTextPids[0]
+    console.log(`  using ${noTextPid}`)
     await withReader(noTextPid, async (page) => {
       await opened(page)
       await page.waitForFunction(() => window.__indexDone === true, null, { timeout: 120000 })

@@ -94,6 +94,14 @@
   box-shadow: 0 0 0 2px rgba(180, 90, 0, 0.55);
 }
 
+/* Narrow screens: the find row takes its own full line, below the controls.
+ *
+ * The desktop toolbar is ~50px and must stay that way, so this does not add a
+ * bar - it reflows the existing .reader-top row. Measured heights with the find
+ * row in place: 92px desktop, 185px at 375px, 222px at 320px. The mobile figures
+ * are higher than the old 151px because search needs a row of its own there;
+ * that is a deliberate trade for a usable box and an N-of-M counter rather than
+ * a 40px-wide field. */
 @media (max-width: 640px) {
   .reader-find {
     order: 3;
