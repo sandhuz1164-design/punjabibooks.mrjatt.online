@@ -1,0 +1,56 @@
+/* Trimmed .textLayer ruleset for PDF.js 4.6.82.
+ *
+ * PDF.js renders glyphs onto the canvas, which makes the page text
+ * unselectable. TextLayer re-emits the same glyphs as transparent, absolutely
+ * positioned spans in a container overlaying the canvas; these are the rules it
+ * needs to do that.
+ *
+ * Deliberately not a copy of pdf_viewer.css. That file also styles annotations,
+ * thumbnails, toolbars, presentation mode and the sidebar - none of which this
+ * reader has - and vendoring the whole thing would add hundreds of rules that
+ * can never apply, plus a temptation to treat it as a network dependency.
+ *
+ * Only these rules are load-bearing for selection:
+ *   - the container overlays the canvas and clips
+ *   - spans are transparent and absolutely positioned
+ *   - selection is visible, which is the entire point
+ */
+
+/* The reader's stage is a centred flex container, so the layer is *not* stretched
+   with inset:0 - that would span the whole stage while the canvas sits centred
+   inside it, putting every span in the wrong place. reader.php sets this
+   element's left/top/width/height to the canvas's box on each render. */
+.textLayer {
+  position: absolute;
+  overflow: clip;
+  opacity: 1;
+  line-height: 1;
+  text-size-adjust: none;
+  forced-color-adjust: none;
+  transform-origin: 0 0;
+  caret-color: CanvasText;
+  z-index: 0;
+}
+
+.textLayer span,
+.textLayer br {
+  color: transparent;
+  position: absolute;
+  white-space: pre;
+  cursor: text;
+  transform-origin: 0% 0%;
+}
+
+.textLayer span::selection {
+  background: rgba(0, 0, 255, 0.25);
+}
+
+.textLayer ::selection {
+  background: rgba(0, 0, 255, 0.25);
+}
+
+/* Spans PDF.js marks as having no glyphs must not capture clicks meant for the
+ * canvas underneath. */
+.textLayer span[aria-hidden="true"] {
+  user-select: none;
+}

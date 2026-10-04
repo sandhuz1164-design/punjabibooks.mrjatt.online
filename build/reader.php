@@ -138,6 +138,10 @@ function reader_body(array $b, string $root = ''): string
         . '<div id="readerStatus" class="reader-status" role="status">Opening the book&hellip;</div>'
         . '<div id="readerStage" class="reader-stage" hidden>'
         . '<canvas id="pdfCanvas"></canvas>'
+        // PDF.js paints glyphs to the canvas, which makes the text unselectable.
+        // This overlay carries the same glyphs as transparent, absolutely
+        // positioned spans so the reader can select and copy them.
+        . '<div id="pdfTextLayer" class="textLayer"></div>'
         . '</div>'
         // Page-turn bar. The top toolbar sits above the page and scrolls away, so
         // reading means reaching back up to turn the page; this stays put.
@@ -167,6 +171,7 @@ function reader_body(array $b, string $root = ''): string
         . 'const numEl = $("pgNum"), cntEl = $("pgCount"), zoomEl = $("zoomVal"), srcTag = $("srcTag");'
         . 'const numElB = $("pgNumB"), cntElB = $("pgCountB"), bottom = $("readerBottom");'
         . 'let doc = null, page = 1, scale = 1, fit = 1, task = null, rendering = false;'
+        . 'let textTask = null;'
         . 'const ctx = canvas.getContext("2d", { alpha: false });'
         . 'const say = (t) => { status.textContent = t; };'
         . 'function fail(html) {'
@@ -207,6 +212,8 @@ function reader_body(array $b, string $root = ''): string
         . '    sync();'
         . '    await render();'
         . '    status.hidden = true;'
+        // Readiness flag for tools/t/reader-text.test.mjs.
+        . '    window.__readerReady = true;'
         . '  } catch (err) {'
         . '    fail("<p>The book could not be opened ("'
         . '      + (err && err.message ? err.message : err) + ").</p>"'
@@ -219,10 +226,13 @@ function reader_body(array $b, string $root = ''): string
         . '  rendering = true;'
         . '  try {'
         . '    if (task) { try { task.cancel(); } catch (x) {} }'
+        // Exposed for Task 4: highlights must be positioned with the same
+        // viewport the canvas was drawn with, and that viewport is local here.
         . '    const p = await doc.getPage(page);'
         . '    const base = p.getViewport({ scale: 1 });'
         . '    fit = Math.max(320, stage.clientWidth - 24) / base.width;'
         . '    const vp = p.getViewport({ scale: scale * fit });'
+        . '    window.__currentVp = vp;'
         . '    const dpr = Math.min(window.devicePixelRatio || 1, 2);'
         . '    canvas.width = Math.floor(vp.width * dpr);'
         . '    canvas.height = Math.floor(vp.height * dpr);'
@@ -232,11 +242,33 @@ function reader_body(array $b, string $root = ''): string
         . '    task = p.render({ canvasContext: ctx, viewport: vp });'
         . '    await task.promise;'
         . '    task = null;'
+        // Selection needs the glyphs as real text. PDF.js paints them to the
+        // canvas, so TextLayer re-emits them as transparent positioned spans in
+        // an overlay pinned to the canvas box.
+        . '    await drawTextLayer(p, vp);'
         . '    zoomEl.textContent = Math.round(scale * 100) + "%";'
         . '  } catch (err) {'
         . '    if (err && err.name === "RenderingCancelledException") return;'
         . '    say("Page " + page + " failed: " + (err && err.message ? err.message : err));'
         . '  } finally { rendering = false; }'
+        . '}'
+        // The stage is a centred flex box, so the overlay has to be told exactly
+        // where the canvas ended up rather than simply stretched over the stage.
+        . 'async function drawTextLayer(p, vp) {'
+        . '  const layer = $("pdfTextLayer");'
+        . '  layer.textContent = "";'
+        . '  layer.style.left = canvas.offsetLeft + "px";'
+        . '  layer.style.top = canvas.offsetTop + "px";'
+        . '  layer.style.width = canvas.style.width;'
+        . '  layer.style.height = canvas.style.height;'
+        . '  if (textTask) { try { textTask.cancel(); } catch (x) {} }'
+        . '  textTask = new pdfjsLib.TextLayer({'
+        . '    textContentSource: p.streamTextContent({ includeMarkedContent: true }),'
+        . '    container: layer,'
+        . '    viewport: vp,'
+        . '  });'
+        . '  try { await textTask.render(); }'
+        . '  catch (x) { if (!x || x.name !== "RenderingCancelledException") throw x; }'
         . '}'
         . 'function go(n) {'
         . '  if (!doc) return;'

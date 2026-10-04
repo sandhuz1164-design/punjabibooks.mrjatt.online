@@ -57,6 +57,17 @@ function copy_tree(string $src, string $dst): void
 }
 
 $books = rows("SELECT * FROM products ORDER BY Title");
+// ONLY_PID=<pid> builds a single book. Every loop below iterates $books, so this
+// yields a coherent one-book build in under a second instead of the ~4 minutes a
+// full 5,709-book build takes - which is the difference between a testable
+// edit/verify loop and not. Anything built this way is a partial public/ tree:
+// run a full build (no ONLY_PID) before shipping.
+if (($onlyPid = getenv('ONLY_PID')) !== '' && $onlyPid !== false) {
+    $books = array_values(array_filter(
+        $books,
+        fn(array $b): bool => (string) $b['PID'] === $onlyPid
+    ));
+}
 $cats = categories();
 $nav = $cats;
 $pages = [];
@@ -379,7 +390,11 @@ foreach ($books as $b) {
                 'canonical' => $SITE . '/read/' . $slug . '.html',
                 'nav'       => $nav,
                 // Reader pages should not compete with the book page in search.
-                'head'      => '<meta name="robots" content="noindex,follow">' . "\n",
+                'head'      => '<meta name="robots" content="noindex,follow">' . "\n"
+                    // Selection needs PDF.js's .textLayer rules, which are not part
+                    // of the site stylesheet.
+                    . '<link rel="stylesheet" href="' . $root
+                    . 'assets/vendor/pdfjs/textlayer.css">' . "\n",
                 // Reading is the whole job here: drop the site header and footer
                 // so the reader's own toolbar is the only chrome.
                 'body_class' => 'is-reader',

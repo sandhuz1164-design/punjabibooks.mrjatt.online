@@ -505,6 +505,8 @@ mark { background: var(--brand-soft); color: inherit; border-radius: 3px; paddin
 .reader-status { padding: 1rem; color: var(--muted); }
 .reader-stage {
   display: flex; justify-content: center; gap: 1rem; overflow: auto;
+  /* Positioned ancestor for .textLayer, which is placed on the canvas box. */
+  position: relative;
   background: var(--card); border: 1px solid var(--line); border-radius: 10px;
   padding: 12px; min-height: 60vh; max-height: 88vh;
   /* Clearance for the sticky page-turn bar, which overlays the stage while
