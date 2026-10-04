@@ -1,0 +1,341 @@
+/* ==========================================================================
+   TEST DESIGN — "liner notes"
+   Strand Bookstore
+
+   Ported from the AudioDotCom testdesign/theme.css (the warm-paper direction
+   that sits opposite its dark OLED theme). Same design language, mapped onto
+   this site's class names: .hero .sec .grid .card .chips .sortbar .pager
+
+   Loaded on index.html only; style.css is already in <head> so this wins on
+   equal specificity and every other page is untouched.
+
+   Concept: warm paper, hairline rules instead of cards-with-borders, mono
+   kickers, one burnt-orange accent, generous air. Mobile-first.
+
+   Fonts: this site ships no webfonts, so the display face is the system sans
+   and the kickers use the system mono. The Gurmukhi faces are added because
+   ~1,600 of the books are Gurmukhi script and the default stack has no
+   guarantee of one.
+   ========================================================================== */
+
+:root {
+  --bl-canvas: #fbf8f3;
+  --bl-surface: #ffffff;
+  --bl-surface-2: #f4efe6;
+  --bl-ink: #17140f;
+  --bl-ink-2: #453e35;
+  --bl-muted: #7a7065;
+  --bl-rule: #e6ddcd;
+  --bl-accent: #c2410c;
+  --bl-accent-soft: #fdf0e8;
+  --bl-green: #1f4d3f;
+  --bl-shadow: 0 1px 2px rgb(23 20 15 / 5%), 0 8px 24px -12px rgb(23 20 15 / 18%);
+
+  --bl-sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto,
+    "Noto Sans Gurmukhi", "Nirmala UI", "Helvetica Neue", Arial, sans-serif;
+  --bl-mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas,
+    "Liberation Mono", monospace;
+}
+
+body {
+  background: var(--bl-canvas);
+  color: var(--bl-ink);
+  font-family: var(--bl-sans);
+}
+
+/* Hairline rule texture: reads as paper, costs no image request. */
+main#main {
+  background-image: repeating-linear-gradient(
+    180deg,
+    rgb(23 20 15 / 2%) 0 1px,
+    transparent 1px 34px
+  );
+}
+.wrap { max-width: 1180px; }
+
+/* ---------- hero ---------- */
+
+.hero {
+  background: transparent;
+  border: none;
+  border-bottom: 2px solid var(--bl-ink);
+  border-radius: 0;
+  padding: 46px 0 34px;
+  margin-bottom: 44px;
+}
+.hero-inner { max-width: 780px; margin-inline: auto; text-align: center; }
+.hero .tag-free {
+  background: var(--bl-accent);
+  color: #fff;
+  border-radius: 999px;
+  padding: 4px 12px;
+  font-family: var(--bl-mono);
+  font-size: .68rem;
+  letter-spacing: .14em;
+  text-transform: uppercase;
+}
+.hero h1 {
+  font-size: clamp(1.9rem, 5.6vw, 3.4rem);
+  line-height: 1;
+  letter-spacing: -.035em;
+  font-weight: 700;
+  margin: 18px 0 18px;
+}
+.hero p {
+  font-size: 1rem;
+  line-height: 1.68;
+  color: var(--bl-ink-2);
+  max-width: 60ch;
+  margin-inline: auto;
+}
+.hero-search { margin-top: 26px; }
+.hero-search input, .hero .search input {
+  background: var(--bl-surface);
+  border-color: var(--bl-rule);
+  border-radius: 999px;
+  padding: 12px 20px;
+  min-height: 46px;
+}
+.hero-search button, .hero .search button {
+  background: var(--bl-ink);
+  color: var(--bl-canvas);
+  border-radius: 999px;
+  padding: 12px 24px;
+  min-height: 46px;
+}
+.hero-search button:hover { background: var(--bl-accent); border-color: var(--bl-accent); }
+
+/* ---------- sections: rule above, no boxes ---------- */
+
+.sec { margin-bottom: 54px; }
+.sec-h {
+  font-family: var(--bl-mono);
+  font-size: .74rem;
+  font-weight: 500;
+  letter-spacing: .15em;
+  text-transform: uppercase;
+  color: var(--bl-muted);
+  padding-bottom: 10px;
+  border-bottom: 1px solid var(--bl-rule);
+  margin: 0 0 10px;
+}
+.sec-note {
+  font-family: var(--bl-sans);
+  font-size: .85rem;
+  color: var(--bl-muted);
+  margin: 10px 0 24px;
+}
+
+/* ---------- covers ---------- */
+
+.grid {
+  grid-template-columns: repeat(auto-fill, minmax(158px, 1fr));
+  gap: 34px 24px;
+}
+.grid .card {
+  background: none;
+  border: none;
+  border-radius: 10px;
+  box-shadow: none;
+}
+.grid .card:hover { transform: translateY(-3px); box-shadow: none; }
+.grid .card-media {
+  border-radius: 10px;
+  border: 1px solid var(--bl-rule);
+  box-shadow: var(--bl-shadow);
+  transition: box-shadow .18s ease, transform .18s ease;
+}
+.grid .card:hover .card-media {
+  box-shadow: 0 2px 4px rgb(23 20 15 / 8%), 0 14px 30px -14px rgb(23 20 15 / 26%);
+}
+.grid .card-body { padding: 11px 3px 0; gap: 0; flex: 0 0 auto; }
+
+/* ---------- book name + author ---------- */
+
+.grid .card-title {
+  font-size: .86rem;
+  line-height: 1.36;
+  font-weight: 600;
+  letter-spacing: -.004em;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  overflow-wrap: anywhere;
+}
+.grid .card-title a { color: var(--bl-ink); }
+
+/* attr() reads only the element it is on, and data-author lives on the
+   <article class="card">, so the author hangs off the card, not the title. */
+.grid .card::after {
+  content: attr(data-author);
+  display: block;
+  padding: 4px 3px 0;
+  font-size: .74rem;
+  line-height: 1.3;
+  font-weight: 400;
+  color: var(--bl-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* ---------- chips ---------- */
+
+.chips { gap: 8px; }
+.chip {
+  background: var(--bl-surface);
+  border-color: var(--bl-rule);
+  border-radius: 999px;
+  padding: 8px 14px;
+  font-size: .84rem;
+  color: var(--bl-ink-2);
+  min-height: 40px;
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+}
+.chip:hover { border-color: var(--bl-ink); color: var(--bl-ink); background: var(--bl-surface); }
+.chip .n { font-family: var(--bl-mono); font-size: .72rem; color: var(--bl-muted); }
+
+/* ---------- controls ---------- */
+
+.sortbar { gap: 7px; margin-bottom: 14px; }
+.sortbar-label {
+  font-family: var(--bl-mono);
+  font-size: .7rem;
+  letter-spacing: .14em;
+  text-transform: uppercase;
+}
+.sortbar button {
+  background: var(--bl-surface);
+  border-color: var(--bl-rule);
+  border-radius: 999px;
+  padding: 9px 16px;
+  min-height: 40px;
+  color: var(--bl-ink-2);
+}
+.sortbar button[aria-pressed="true"] {
+  background: var(--bl-ink);
+  border-color: var(--bl-ink);
+  color: var(--bl-canvas);
+}
+.filterbar {
+  background: var(--bl-surface);
+  border-color: var(--bl-rule);
+  border-radius: 12px;
+  padding: 14px 16px;
+}
+.filter select, .filter input[type="search"] {
+  background: var(--bl-canvas);
+  border-color: var(--bl-rule);
+  border-radius: 8px;
+  color: var(--bl-ink);
+  min-height: 40px;
+}
+.filter-clear { color: var(--bl-accent); }
+.filter-count { font-family: var(--bl-mono); font-size: .74rem; }
+
+/* ---------- pager ---------- */
+
+.pager { border-top-color: var(--bl-rule); gap: 6px; }
+.pager a, .pager span {
+  background: var(--bl-surface);
+  border-color: var(--bl-rule);
+  border-radius: 8px;
+  color: var(--bl-ink-2);
+  min-height: 40px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+.pager a:hover { border-color: var(--bl-ink); color: var(--bl-ink); }
+.pager .pg-on {
+  background: var(--bl-ink);
+  border-color: var(--bl-ink);
+  color: var(--bl-canvas);
+}
+
+/* ---------- header / footer ---------- */
+
+.site-head { background: var(--bl-canvas); border-bottom-color: var(--bl-rule); }
+.brand { font-weight: 700; letter-spacing: -.015em; }
+.brand em { color: var(--bl-accent); }
+.site-nav > a:hover, .site-nav .on { background: var(--bl-surface-2); }
+.search input {
+  background: var(--bl-surface);
+  border-color: var(--bl-rule);
+  min-height: 42px;
+}
+.search button { background: var(--bl-accent); border-color: var(--bl-accent); min-height: 42px; }
+.site-foot { background: transparent; border-top-color: var(--bl-rule); }
+.foot-brand { font-weight: 700; letter-spacing: -.015em; }
+.foot-brand em { color: var(--bl-accent); }
+
+/* ---------- script badge on the cover ---------- */
+
+.script-tag {
+  border: 0;
+  background: rgb(23 20 15 / 74%);
+  backdrop-filter: blur(3px);
+  -webkit-backdrop-filter: blur(3px);
+  box-shadow: none;
+  font-family: var(--bl-mono);
+  font-size: .64rem;
+  letter-spacing: .1em;
+  text-transform: uppercase;
+}
+.script-tag[data-script="gurmukhi"] { background: rgb(178 46 20 / 90%); }
+.script-tag[data-script="roman"]   { background: rgb(23 20 15 / 74%); }
+
+/* ---------- download size stays green ---------- */
+
+.dl-size { color: #7ee2a8; font-family: var(--bl-mono); }
+
+/* ---------- phone ---------- */
+
+@media (max-width: 560px) {
+  .wrap { max-width: none; }
+  .hero { padding: 28px 0 22px; margin-bottom: 32px; }
+  .hero p { font-size: .94rem; }
+  /* 140px keeps two readable columns at 390px instead of three cramped ones. */
+  .grid { grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 24px 15px; }
+  .grid .card-title { font-size: .78rem; }
+  .grid .card::after { font-size: .7rem; }
+
+  /* 44px tap targets: every nav link and button measured 40px before this. */
+  .site-nav > a, .site-nav .drop > button, .search button,
+  .hero-search button, .sortbar button, .chip {
+    min-height: 44px;
+    display: inline-flex;
+    align-items: center;
+  }
+  .search input, .hero-search input, .filter select, .filter input[type="search"] {
+    min-height: 44px;
+  }
+  .site-nav { gap: 6px 10px; }
+  .sec { margin-bottom: 40px; }
+}
+
+/* ---------- dark mode: warm-dark rather than pure black ---------- */
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bl-canvas: #14110e;
+    --bl-surface: #1c1916;
+    --bl-surface-2: #262220;
+    --bl-ink: #f3ede4;
+    --bl-ink-2: #cfc5b8;
+    --bl-muted: #94897c;
+    --bl-rule: #332e29;
+    --bl-accent: #e8674a;
+    --bl-accent-soft: #2a1a14;
+    --bl-green: #7fc4a8;
+    --bl-shadow: 0 1px 2px rgb(0 0 0 / 40%), 0 10px 26px -14px rgb(0 0 0 / 60%);
+  }
+  main#main {
+    background-image: repeating-linear-gradient(
+      180deg, rgb(255 250 240 / 2%) 0 1px, transparent 1px 34px);
+  }
+  .dl-size { color: #86e0ac; }
+}

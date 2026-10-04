@@ -1,0 +1,100 @@
+<?php
+
+const DB_HOST = 'localhost';
+const DB_NAME = 'bookstore';
+const DB_USER = 'bookstore';
+const DB_PASS = 'CHANGE_ME';
+
+function db(): PDO
+{
+    static $pdo = null;
+    if ($pdo === null) {
+        $pdo = new PDO(
+            'mysql:host=' . DB_HOST . ';dbname=' . DB_NAME . ';charset=utf8mb4',
+            DB_USER,
+            DB_PASS,
+            [
+                PDO::ATTR_ERRMODE            => PDO::ERRMODE_EXCEPTION,
+                PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC,
+                PDO::ATTR_EMULATE_PREPARES   => false,
+            ]
+        );
+    }
+    return $pdo;
+}
+
+function q(string $sql, array $params = []): PDOStatement
+{
+    $stmt = db()->prepare($sql);
+    $stmt->execute($params);
+    return $stmt;
+}
+
+function rows(string $sql, array $params = []): array
+{
+    return q($sql, $params)->fetchAll();
+}
+
+function one(string $sql, array $params = []): ?array
+{
+    $row = q($sql, $params)->fetch();
+    return $row === false ? null : $row;
+}
+
+function e($value): string
+{
+    return htmlspecialchars((string) $value, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');
+}
+
+function money($value): string
+{
+    return number_format((float) $value, 0, '.', ',');
+}
+
+function canon_category(string $name): string
+{
+    $name = preg_replace('/\s+and\s+/i', ' & ', trim($name));
+    $name = preg_replace('/\s+/', ' ', trim($name));
+    return $name === '' ? 'Uncategorised' : ucwords(strtolower($name));
+}
+
+const CATEGORY_SQL = "REPLACE(LOWER(Category),' and ',' & ')";
+
+function categories(): array
+{
+    $found = [];
+    foreach (rows("SELECT Category FROM products
+                   WHERE Category IS NOT NULL AND Category <> ''") as $r) {
+        $key = canon_category((string) $r['Category']);
+        $found[$key] = ($found[$key] ?? 0) + 1;
+    }
+    arsort($found);
+    $out = [];
+    foreach ($found as $label => $count) {
+        $out[] = ['label' => (string) $label, 'count' => $count];
+    }
+    return $out;
+}
+
+const SORTS = [
+    'price-asc'  => 'Price ASC',
+    'price-desc' => 'Price DESC',
+    'disc-desc'  => 'Discount DESC',
+    'disc-asc'   => 'Discount ASC',
+    'title'      => 'Title ASC',
+];
+
+function order_by(string $sort): string
+{
+    return SORTS[$sort] ?? SORTS['price-asc'];
+}
+
+function like_term(string $q): string
+{
+    return '%' . str_replace(['\\', '%', '_'], ['\\\\', '\\%', '\\_'], trim($q)) . '%';
+}
+
+function cover(string $pid): string
+{
+    return 'img/books/' . $pid . '.jpg';
+}

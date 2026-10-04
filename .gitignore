@@ -1,0 +1,24 @@
+# Generated site output. Reproduce with:  php build/build.php
+# 223 MB / 17,732 files of static HTML rebuilt from the database. Committing it
+# would mean a 17k-file diff on every content change; the source below is 2 MB.
+/public/
+
+# Holds DB_PASS. Copy db.php.example to db.php and fill it in.
+/db.php
+
+# Live admin session (PHPSESSID). Never commit; regenerate with admin-session.sh.
+/admin-session.cookie
+*.cookie
+
+# Local PDF library. The site streams from archive.org; nothing is stored here.
+# The original default lived on an ntfs3 autofs mount that silently dropped a
+# written file within the hour, so it must never be tracked.
+/book-library/
+*.pdf
+
+# Superpowers scratch: ledgers, task briefs, review packages. Scratch, not record.
+/.superpowers/
+
+node_modules/
+.DS_Store
+*.swp
