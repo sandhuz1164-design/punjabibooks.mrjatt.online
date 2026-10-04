@@ -69,6 +69,55 @@ async function withReader(pid, fn) {
 
 // ---------------------------------------------------------------- selection
 
+// The reader's JavaScript is assembled by concatenating PHP strings, so a stray
+// backtick or an unbalanced brace in a PHP *comment* becomes a syntax error in
+// the served page - and it kills the whole module, so every other assertion
+// fails on a timeout rather than on anything real. A PHP comment containing a
+// backtick did exactly that, and read as five unrelated failures. Check the
+// served script parses before anything else.
+async function testReaderScriptParses() {
+  console.log('\nreader script')
+  const res = await fetch(READER_URL(TEXT_PID))
+  const html = await res.text()
+  const m = html.match(/<script type="module">([\s\S]*?)<\/script>/)
+  ok(Boolean(m), 'reader page carries a module script')
+  if (!m) return
+
+  const src = m[1]
+  // Strip static imports: they cannot be evaluated outside a module, and their
+  // presence is not what this check is about. The `m` flag alone is not enough -
+  // reader.php emits the first import after a newline but the rest of the body
+  // on one line, so anchor on a leading statement too.
+  // The rest is compiled but not run, so a stray backtick or unbalanced brace in
+  // a PHP comment surfaces here instead of killing the whole reader module in
+  // the browser, where it presents as every other assertion timing out.
+  // reader.php concatenates the whole module into one line, so a `//` comment in
+  // the generated JS would swallow everything after it - and a `//` also occurs
+  // harmlessly inside strings (the archive.org URL). Rewrite both forms before
+  // parsing: strings become placeholders, line comments are stripped, and the
+  // placeholders are restored afterwards.
+  let body = src
+    .replace(/^\s*import\s[^;]*;/gm, '')
+    .replace(/^import\s[^;]*;/, '')
+  const literals = []
+  body = body
+    .replace(/`(?:[^`\\]|\\.)*`|"(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*'/g, (m) => {
+      literals.push(m)
+      return `__LIT${literals.length - 1}__`
+    })
+    .replace(/\/\/[^\n]*/g, '')
+  body = body.replace(/__LIT(\d+)__/g, (_, i) => literals[Number(i)])
+  try {
+    // async/await is only legal inside an async context, which new Function is
+    // not; wrapping in an async IIFE gives the same parse without executing.
+    new Function(`return (async () => { ${body} })`)
+    ok(true, 'reader script parses as valid JavaScript', `${src.length} chars`)
+  } catch (err) {
+    ok(false, 'reader script parses as valid JavaScript',
+      `${String(err && err.message)} (at char ${(err && err.stack ? String(err.stack).match(/<anonymous>:1:(\d+)/)?.[1] : '?')})`)
+  }
+}
+
 async function testSelection() {
   console.log('\nselection')
   await withReader(TEXT_PID, async (page, errors) => {
@@ -99,27 +148,77 @@ async function testSelection() {
     ok(stagePosition !== 'static', 'stage is a positioned ancestor', stagePosition)
 
     // The real assertion: text is selectable and comes back as readable text.
-    const selected = await page.evaluate(() => {
+    // Geometry, not just presence.
+    //
+    // PDF.js sizes the text layer and its spans in calc() terms of
+    // --scale-factor. With that variable unset the layer collapses to zero width
+    // and every span lands at left:0 with an inherited font-size - while a
+    // programmatic Range over the text nodes still "works", because Range
+    // selection never consults geometry. Asserting on a Range therefore proved
+    // nothing about whether a reader can select text; only real hit-testing can.
+    const geo = await page.evaluate(() => {
       const layer = document.getElementById('pdfTextLayer')
-      const walker = document.createTreeWalker(layer, NodeFilter.SHOW_TEXT)
-      const nodes = []
-      let node
-      while ((node = walker.nextNode()) && nodes.length < 40) {
-        if (node.nodeValue && node.nodeValue.trim()) nodes.push(node)
+      const canvas = document.getElementById('pdfCanvas')
+      const lr = layer.getBoundingClientRect()
+      const cr = canvas.getBoundingClientRect()
+      const span = [...layer.querySelectorAll('span')].find((s) => s.getBoundingClientRect().width > 0)
+      return {
+        layerW: Math.round(lr.width), layerH: Math.round(lr.height),
+        canvasW: Math.round(cr.width), canvasH: Math.round(cr.height),
+        scaleFactor: getComputedStyle(layer).getPropertyValue('--scale-factor').trim(),
+        spanWidth: span ? Math.round(span.getBoundingClientRect().width) : 0,
       }
-      if (nodes.length < 2) return ''
-      const range = document.createRange()
-      range.setStart(nodes[0], 0)
-      const last = nodes[nodes.length - 1]
-      range.setEnd(last, last.nodeValue.length)
-      const sel = window.getSelection()
-      sel.removeAllRanges()
-      sel.addRange(range)
-      return sel.toString()
     })
-    const collapsed = selected.replace(/\s+/g, ' ').trim()
-    ok(collapsed.length > 40, 'selecting across the layer yields real text',
-      `${collapsed.length} chars: ${JSON.stringify(collapsed.slice(0, 60))}`)
+    ok(geo.scaleFactor !== '' && geo.scaleFactor !== '(unset)',
+      '--scale-factor is set on the text layer', JSON.stringify(geo.scaleFactor))
+    ok(Math.abs(geo.layerW - geo.canvasW) <= 2 && Math.abs(geo.layerH - geo.canvasH) <= 2,
+      'text layer box matches the canvas box',
+      `layer ${geo.layerW}x${geo.layerH} vs canvas ${geo.canvasW}x${geo.canvasH}`)
+    ok(geo.spanWidth > 5, 'layer spans have real width', `${geo.spanWidth}px`)
+
+    // A drag, not a Range: this is what a reader actually does.
+    //
+    // Scroll the target into the viewport first and read its box back afterwards
+    // - PDF.js positions spans in absolute page coordinates, so a box read
+    // before scrolling points somewhere else on screen entirely, and the drag
+    // lands on whatever happens to be there.
+    const dragTarget = await page.evaluate(() => {
+      const span = [...document.querySelectorAll('#pdfTextLayer span')]
+        .find((s) => {
+          const r = s.getBoundingClientRect()
+          return (s.textContent || '').trim().length > 3 && r.width > 20
+        })
+      if (!span) return null
+      span.scrollIntoView({ block: 'center', behavior: 'instant' })
+      const r = span.getBoundingClientRect()
+      return {
+        x: Math.round(r.left + r.width / 2),
+        y: Math.round(r.top + r.height / 2),
+        width: Math.round(r.width),
+        text: (span.textContent || '').trim(),
+      }
+    })
+    ok(dragTarget !== null, 'found a span to drag across', JSON.stringify(dragTarget && dragTarget.text))
+
+    if (dragTarget) {
+      const reach = Math.max(20, Math.min(60, Math.floor(dragTarget.width / 2)))
+      await page.mouse.move(dragTarget.x - reach, dragTarget.y)
+      await page.mouse.down()
+      await page.mouse.move(dragTarget.x + reach, dragTarget.y, { steps: 15 })
+      await page.mouse.up()
+      await page.waitForTimeout(350)
+
+      const dragged = await page.evaluate(() => (window.getSelection() || '').toString())
+      const collapsed = dragged.replace(/\s+/g, ' ').trim()
+      ok(collapsed.length > 0, 'a real mouse drag selects text', JSON.stringify(collapsed.slice(0, 40)))
+      // Dragging left-to-right across a word's middle selects a suffix of it, so
+      // compare on a shared substring rather than requiring the whole word.
+      const want = dragTarget.text.replace(/\s/g, '')
+      const got = collapsed.replace(/\s/g, '')
+      ok(got.length >= 3 && want.includes(got) || got.includes(want),
+        'the drag selected text from the span it crossed',
+        `span ${JSON.stringify(want.slice(0, 16))}, selected ${JSON.stringify(got.slice(0, 16))}`)
+    }
 
     eq(errors.length, 0, 'no console errors', errors.join(' | '))
   })
@@ -337,25 +436,80 @@ async function testHighlight() {
     // recomputing it. A separate recomputation can pick a different word than
     // the one the reader actually holds, which reads as "no highlight" rather
     // than as "the test asked for something else".
+    // Pick a term that lives inside a single text item on its own page.
+    //
+    // The earlier version took the most frequent word in the whole book, which
+    // landed mid-line and highlighted only the tail of a 210px span - correct
+    // behaviour for a hit that starts inside an item, but it made the size
+    // assertion meaningless. Single-item matches keep this test about the box.
     const term = await page.evaluate(() => {
-      const letters = /[A-Za-z]{5,}|[\u0A00-\u0A7F]{4,}/gu
-      const counts = new Map()
-      for (const [, v] of window.__readerIndex) {
-        for (const m of (v.text || '').match(letters) || []) {
-          counts.set(m, (counts.get(m) || 0) + 1)
+      for (const [, pt] of window.__readerIndex) {
+        for (const it of pt.items || []) {
+          const w = (it.str || '').trim()
+          if (w.length >= 4 && !/\s/.test(w)) return w
         }
       }
-      let best = '', n = 0
-      for (const [w, c] of counts) if (c > n || (c === n && w.length > best.length)) { best = w; n = c }
-      return best
+      return ''
     })
+    ok(term.length >= 4, 'fixture offers a whole-word match inside one item', term)
+    // Jump to the match's own page and let the reader settle there before
+    // measuring. Asserting against whatever page the reader happens to be on
+    // measures the wrong layer - the highlight lands on page 12 while the
+    // comparison runs against page 1's spans.
     await page.fill('#findInput', term)
+    await page.waitForFunction(() => /\d+ of \d+/.test(
+      document.getElementById('findCount').textContent), null, { timeout: 20000 })
+    await page.waitForFunction((want) => {
+      const hit = window.findAll(window.__readerIndex, want, window.__readerDoc.numPages)[0]
+      return hit && window.__renderedPage === hit.page
+    }, term, { timeout: 20000 })
+    await page.waitForFunction(() => window.__highlightCount > 0, null, { timeout: 20000 })
     // Wait for the reader's own counter to report hits before asking about
     // highlights, so a zero-match search cannot masquerade as a highlight bug.
     await page.waitForFunction(() => /\d+ of \d+/.test(
       document.getElementById('findCount').textContent), null, { timeout: 20000 })
     ok(true, 'search produced matches before highlight is checked', term)
     await page.waitForFunction(() => window.__highlightCount > 0, null, { timeout: 20000 })
+
+    // Position, not just presence. The box has to sit on the word it claims to
+    // mark: the previous implementation drew a plausible box roughly 600px from
+    // the match, 4x too tall, with no top at all, and the only assertion was
+    // "inside the canvas" - which a box in the wrong place satisfies.
+    const aligned = await page.evaluate((want) => {
+      const layer = document.getElementById('pdfTextLayer')
+      const hl = layer.querySelector('.hl')
+      if (!hl) return { none: true }
+      const hr = hl.getBoundingClientRect()
+      // The span is found by position, not by content: PDF.js emits a span for
+    // whitespace-only items too, so filtering them out first (as an earlier
+    // version did) made the search compare the highlight against spans from the
+    // wrong item.
+    const textOf = (el) => (el.textContent || '').trim()
+    const all = [...layer.querySelectorAll('span:not(.hl)')]
+    const candidates = all.map((s) => {
+      const r = s.getBoundingClientRect()
+      return { text: textOf(s), r,
+        overlap: Math.max(0, Math.min(r.right, hr.right) - Math.max(r.left, hr.left)) }
+    }).filter((c) => c.overlap > 0)
+    const best = candidates.sort((a, b) => b.overlap - a.overlap)[0]
+    return best ? {
+      overlapPx: Math.round(best.overlap),
+      hlW: Math.round(hr.width), hlH: Math.round(hr.height),
+      spanW: Math.round(best.r.width), spanH: Math.round(best.r.height),
+      overlapHasTerm: best.text.replace(/\s/g, '').includes(want.replace(/\s/g, '')),
+      spanText: best.text.slice(0, 20), want,
+    } : { noOverlap: true, hlW: Math.round(hr.width) }
+    }, term)
+    ok(!aligned.none && !aligned.noOverlap,
+      'highlight overlaps the text it marks', JSON.stringify(aligned))
+    ok(aligned.overlapHasTerm === true,
+      'the overlapped span contains the search term', JSON.stringify(aligned))
+    ok(Math.abs(aligned.hlW - aligned.spanW) <= 4 && Math.abs(aligned.hlH - aligned.spanH) <= 4,
+      'highlight box matches the span it covers in size',
+      `hl ${aligned.hlW}x${aligned.hlH} vs span ${aligned.spanW}x${aligned.spanH}`)
+    ok(aligned.hlW < aligned.spanW * 4,
+      'highlight is the width of its text, not the whole line',
+      `hl ${aligned.hlW}px vs span ${aligned.spanW}px`)
 
     const hl = await page.evaluate(() => {
       const spans = [...document.querySelectorAll('#pdfTextLayer .hl')]
@@ -405,6 +559,39 @@ async function testHighlight() {
 }
 
 // ----------------------------------------------------------------- fallback
+
+// A search typed before the index exists must not report a negative result.
+// Review Focus #1 in the window before the fallback notice can appear.
+async function testMidIndexSearch() {
+  console.log('\nmid-index search')
+  await withReader(TEXT_PID, async (page, errors) => {
+    await opened(page)
+    // Fill the box as early as possible: the reader is ready before the index
+    // finishes, which is the whole point of the test.
+    await page.fill('#findInput', 'ਸਿੰਘ')
+    const during = await page.evaluate(() => ({
+      done: !!window.__indexDone,
+      count: document.getElementById('findCount').textContent.trim(),
+    }))
+    ok(during.count !== 'No matches',
+      'a search before indexing finishes does not claim "No matches"',
+      `count was ${JSON.stringify(during.count)}, indexDone=${during.done}`)
+    ok(/searching/i.test(during.count) || during.done,
+      'it either reports it is still searching, or the index was already done',
+      JSON.stringify(during.count))
+
+    if (!during.done) {
+      // And once the index lands, the same search must produce a real answer.
+      await page.waitForFunction(() => window.__indexDone === true, null, { timeout: 120000 })
+      await page.waitForFunction(() => /\d+ of \d+|No matches/.test(
+        document.getElementById('findCount').textContent), null, { timeout: 20000 })
+      const after = await page.textContent('#findCount')
+      ok(/\d+ of \d+/.test(after),
+        'the deferred search resolves to a real count once indexed', after)
+    }
+    eq(errors.length, 0, 'no console errors', errors.join(' | '))
+  })
+}
 
 async function testFallback() {
   console.log('\nfallback')
@@ -468,10 +655,12 @@ async function testFallback() {
 // --------------------------------------------------------------------- main
 
 const GROUPS = {
+  script: testReaderScriptParses,
   selection: testSelection,
   index: testIndex,
   find: testFind,
   highlight: testHighlight,
+  midindex: testMidIndexSearch,
   fallback: testFallback,
 }
 

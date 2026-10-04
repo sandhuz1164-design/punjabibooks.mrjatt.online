@@ -25,13 +25,14 @@ export function pageTextOf(pageText) {
  * 300-page book would open 300 simultaneous range requests against Archive.org
  * and stall the reader behind them.
  */
-export async function buildIndex(doc, { onProgress, signal } = {}) {
+export async function buildIndex(doc, { onProgress, onPage, signal } = {}) {
   const map = new Map()
   const total = doc.numPages
 
   for (let n = 1; n <= total; n++) {
     if (signal && signal.aborted) break
     let items = []
+    let ok = true
     try {
       const page = await doc.getPage(n)
       const content = await page.getTextContent()
@@ -43,8 +44,12 @@ export async function buildIndex(doc, { onProgress, signal } = {}) {
       // concerned. It must not abort the walk - a single unreadable page in a
       // 300-page scan must not cost the reader the other 299.
       items = []
+      ok = false
     }
     map.set(n, { text: items.map((i) => i.str).join(JOIN), items })
+    // Distinguishes "this page has no text" from "this page could not be read",
+    // which is what lets the reader be honest about partial coverage.
+    if (onPage) onPage(n, ok)
     if (onProgress) onProgress(n, total)
     // Yield so indexing never blocks a page turn or a keystroke.
     if (n % 8 === 0) await new Promise((r) => setTimeout(r, 0))

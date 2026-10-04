@@ -191,6 +191,11 @@ function reader_body(array $b, string $root = ''): string
         . 'const numElB = $("pgNumB"), cntElB = $("pgCountB"), bottom = $("readerBottom");'
         . 'let doc = null, page = 1, scale = 1, fit = 1, task = null, rendering = false;'
         . 'let textTask = null;'
+        . 'let pendingRender = false;'
+        // Pages whose text failed to extract. Kept so the find box can say
+        // "searching N of M pages" instead of implying the whole book was
+        // searched when some of it never was.
+        . 'const unreadable = new Set();'
         . 'let hits = [], hitAt = -1;'
         . 'const findInput = $("findInput"), findCount = $("findCount");'
         // Exposed so the test suite can drive the same code path the reader's
@@ -203,6 +208,15 @@ function reader_body(array $b, string $root = ''): string
         . '  window.locateItems = locateItems;'
         . '}'
         . 'function runFind(term) {'
+        // Before the index is ready the Map is empty, so a search would report
+        // "No matches" - telling the reader a word is absent from a book nobody
+        // has read yet. Say it is still working instead, and the real answer
+        // arrives when indexing completes.
+        . '  if (!window.__indexDone) {'
+        . '    hits = []; hitAt = -1;'
+        . '    findCount.textContent = "searching…";'
+        . '    return;'
+        . '  }'
         . '  hits = term ? findAll(window.__readerIndex, term, doc ? doc.numPages : 0) : [];'
         . '  hitAt = hits.length ? 0 : -1;'
         . '  paintCount();'
@@ -250,9 +264,19 @@ function reader_body(array $b, string $root = ''): string
         . '  }'
         . '}'
         . 'function paintCount() {'
-        . '  findCount.textContent = hits.length'
+        . '  if (!window.__indexDone) {'
+        . '    findCount.textContent = findInput.value.trim() ? "searching…" : "";'
+        . '    return;'
+        . '  }'
+        . '  if (!findInput.value.trim()) { findCount.textContent = ""; return; }'
+        . '  const base = hits.length'
         . '    ? (hitAt + 1) + " of " + hits.length'
-        . '    : (findInput.value.trim() ? "No matches" : "");'
+        . '    : "No matches";'
+        // Say so when pages were skipped. "No matches" on a book where 40 of
+        // 380 pages could not be read is a claim the reader cannot verify.
+        . '  findCount.textContent = unreadable.size && window.__indexDone'
+        . '    ? base + " (" + unreadable.size + " pages unreadable)"'
+        . '    : base;'
         . '}'
         . 'function step(delta) {'
         . '  if (!hits.length) return;'
@@ -334,7 +358,9 @@ function reader_body(array $b, string $root = ''): string
         . '    window.__indexAbort = idxAbort;'
         . '    window.__readerIndex = new Map();'
         . '    exposeSearchApi();'
-        . '    buildIndex(doc, { signal: idxAbort }).then((m) => {'
+        . '    buildIndex(doc, { signal: idxAbort, onPage: (n, ok) => {'
+        . '      if (!ok) unreadable.add(n);'
+        . '    } }).then((m) => {'
         . '      window.__readerIndex = m;'
         . '      window.__indexDone = true;'
         . '      settleFindBox();'
@@ -349,8 +375,13 @@ function reader_body(array $b, string $root = ''): string
         . '        rel=\\"noopener nofollow\\">Read it on Archive.org instead</a></p>" : ""));'
         . '  }'
         . '}'
+        // A page turn requested while a render is in flight must not be dropped.
+        // go() updates the indicator synchronously, so bailing here would leave
+        // the number and the picture disagreeing - and runFind() calls go() on
+        // every keystroke, so typing during a render would strand the reader.
         . 'async function render() {'
-        . '  if (!doc || rendering) return;'
+        . '  if (!doc) return;'
+        . '  if (rendering) { pendingRender = true; return; }'
         . '  rendering = true;'
         . '  try {'
         . '    if (task) { try { task.cancel(); } catch (x) {} }'
@@ -378,23 +409,43 @@ function reader_body(array $b, string $root = ''): string
         // canvas, so TextLayer re-emits them as transparent positioned spans in
         // an overlay pinned to the canvas box.
         . '    await drawTextLayer(p, vp);'
+        // Where the page actually landed, as opposed to what was asked for. A turn
+        // requested mid-render is deferred (pendingRender), so page can already
+        // hold a number this render never drew. Highlights must key off this.
+        . '    window.__renderedPage = page;'
         // The text layer was just rebuilt, so an active match must be repainted.
         . '    scheduleRepaint();'
         . '    zoomEl.textContent = Math.round(scale * 100) + "%";'
         . '  } catch (err) {'
         . '    if (err && err.name === "RenderingCancelledException") return;'
         . '    say("Page " + page + " failed: " + (err && err.message ? err.message : err));'
-        . '  } finally { rendering = false; }'
+        . '  } finally {'
+        . '    rendering = false;'
+        // Coalesce any turns that arrived mid-render into one more pass.
+        . '    if (pendingRender) { pendingRender = false; render(); }'
+        . '  }'
         . '}'
+        // ONLY_PID filters the book list, which means every loop below writes only the
+        // books it was given - so a single-book build leaves the other 5,708
+        // reader pages missing from public/, and any test touching a second book
+        // then fails on a 404 that looks like a product bug. Development aid, and
+        // the reason the suite needs a full build before it can be trusted.
         // The stage is a centred flex box, so the overlay has to be told exactly
         // where the canvas ended up rather than simply stretched over the stage.
         . 'async function drawTextLayer(p, vp) {'
         . '  const layer = $("pdfTextLayer");'
         . '  layer.textContent = "";'
+        // PDF.js sizes both the layer and its spans in calc() terms of
+        // --scale-factor, and writes calc(var(--scale-factor) * Npx) into inline
+        // styles. With the variable unset those calc()s are invalid, so the layer
+        // collapses to zero width, every span inherits the fallback 13px font,
+        // and all of them stack at left:0 - the text is unpaintable and
+        // unselectable. Setting the one variable is what makes the layer real.
+        . '  layer.style.setProperty("--scale-factor", String(vp.scale));'
         . '  layer.style.left = canvas.offsetLeft + "px";'
         . '  layer.style.top = canvas.offsetTop + "px";'
-        . '  layer.style.width = canvas.style.width;'
-        . '  layer.style.height = canvas.style.height;'
+        // PDF.js owns the layer's width/height (setLayerDimensions overwrites
+        // them during render), so they are deliberately not assigned here.'
         . '  if (textTask) { try { textTask.cancel(); } catch (x) {} }'
         . '  textTask = new pdfjsLib.TextLayer({'
         . '    textContentSource: p.streamTextContent({ includeMarkedContent: true }),'
@@ -411,35 +462,63 @@ function reader_body(array $b, string $root = ''): string
         // scales and translations matter for a highlight rectangle.
         . 'function paintHighlight(hit) {'
         . '  const layer = $("pdfTextLayer");'
-        . '  const vp = window.__currentVp;'
-        . '  if (!vp) return;'
-        . '  const pt = window.__readerIndex.get(hit.page);'
+        // Typing appends one character at a time, and each one repaints: without
+        // this the reader is left with a pile of boxes marking text that no longer
+        // matches the term.
+        . '  clearHighlights();'
+        // Keyed by the page the layer actually shows, not by the page the hit is on.
+        // After a deferred page turn those differ, and highlighting against the
+        // hit's page would mark items belonging to a different page.
+        . '  const shown = window.__renderedPage;'
+        . '  if (shown !== hit.page) return;'
+        . '  const pt = window.__readerIndex.get(shown);'
         . '  if (!pt) return;'
         . '  const idxs = locateItems(pt.items, hit.index, hit.length);'
-        . '  const spans = layer.querySelectorAll("span");'
+        . '  const spans = spansForItems(pt.items);'
         . '  for (const i of idxs) {'
-        // PDF.js creates one span per item, in order, but whitespace items get
-        // no span - so the Nth span is not item N. Map by text content instead.
-        . '    const el = findSpanFor(spans, pt.items, i);'
+        . '    const el = spans.get(i);'
         . '    if (!el) continue;'
-        . '    const t = pt.items[i].transform;'
-        . '    if (!t) continue;'
+        // No line comments anywhere in this script: reader.php concatenates it all
+        // onto one line, so a // would comment out everything after it on that
+        // line. That is exactly what happened here - the reader script failed to
+        // parse and every other test failed on a timeout instead of on itself.
+        . '    /* PDF.js has already solved the geometry - ascent, rotation and'
+        . '       horizontal scale - and written the result onto the span. Deriving'
+        . '       a rectangle from the raw transform instead puts the box in the'
+        . '       wrong place: transform[0] is the text matrix scale, not the run'
+        . '       width, and transform[5] is the baseline, not the glyph top. */'
+        . '    const r = el.getBoundingClientRect();'
+        . '    const lr = layer.getBoundingClientRect();'
+        . '    if (!r.width || !r.height) continue;'
         . '    const box = document.createElement("span");'
         . '    box.className = "hl";'
-        . '    box.style.left = (t[4] * vp.scale) + "px";'
-        . '    box.style.top = (t[5] * vp.scale - parseFloat(el.style.fontSize || 0)) + "px";'
-        . '    box.style.width = (t[0] * vp.scale) + "px";'
-        . '    box.style.height = (Math.abs(t[3]) * vp.scale) + "px";'
+        . '    box.style.left = (r.left - lr.left) + "px";'
+        . '    box.style.top = (r.top - lr.top) + "px";'
+        . '    box.style.width = r.width + "px";'
+        . '    box.style.height = r.height + "px";'
         . '    layer.appendChild(box);'
         . '  }'
         . '  window.__highlightCount = layer.querySelectorAll(".hl").length;'
         . '}'
-        . 'function findSpanFor(spans, items, i) {'
-        . '  const want = items[i].str;'
-        . '  for (const el of spans) {'
-        . '    if (el.textContent === want) return el;'
+        // Map item index -> the span PDF.js made for it.
+        //
+        // Walking the spans in order and skipping whitespace-only items is exact:
+        // PDF.js emits spans in item order and creates none for whitespace, so the
+        // Nth non-whitespace span is the Nth non-whitespace item. Searching by text
+        // content instead - the previous approach - returns the wrong span for any
+        // repeated string, such as a running head or a page number.
+        . 'function spansForItems(items) {'
+        . '  const spans = [...$("pdfTextLayer").querySelectorAll("span:not(.hl)")];'
+        . '  const out = new Map();'
+        // Verified against the DOM: PDF.js emits a span for every item, including
+        // whitespace-only ones (page 1 has 30 spans and 30 items, alternating
+        // text and blanks). So the Nth span IS item N, and skipping blanks here
+        // shifted every mapping by one - the highlight for "ਲੇਖਕ" was drawn on
+        // the blank span before it.
+        . '  for (let i = 0; i < items.length && i < spans.length; i++) {'
+        . '    out.set(i, spans[i]);'
         . '  }'
-        . '  return null;'
+        . '  return out;'
         . '}'
         . 'function clearHighlights() {'
         . '  const layer = $("pdfTextLayer");'
