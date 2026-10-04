@@ -333,14 +333,28 @@ async function testHighlight() {
     await opened(page)
     await page.waitForFunction(() => window.__indexDone === true, null, { timeout: 120000 })
 
+    // Read the term out of the box the test itself filled, rather than
+    // recomputing it. A separate recomputation can pick a different word than
+    // the one the reader actually holds, which reads as "no highlight" rather
+    // than as "the test asked for something else".
     const term = await page.evaluate(() => {
+      const letters = /[A-Za-z]{5,}|[\u0A00-\u0A7F]{4,}/gu
+      const counts = new Map()
       for (const [, v] of window.__readerIndex) {
-        const w = (v.text || '').match(/[A-Za-z]{5,}/)
-        if (w) return w[0]
+        for (const m of (v.text || '').match(letters) || []) {
+          counts.set(m, (counts.get(m) || 0) + 1)
+        }
       }
-      return ''
+      let best = '', n = 0
+      for (const [w, c] of counts) if (c > n || (c === n && w.length > best.length)) { best = w; n = c }
+      return best
     })
     await page.fill('#findInput', term)
+    // Wait for the reader's own counter to report hits before asking about
+    // highlights, so a zero-match search cannot masquerade as a highlight bug.
+    await page.waitForFunction(() => /\d+ of \d+/.test(
+      document.getElementById('findCount').textContent), null, { timeout: 20000 })
+    ok(true, 'search produced matches before highlight is checked', term)
     await page.waitForFunction(() => window.__highlightCount > 0, null, { timeout: 20000 })
 
     const hl = await page.evaluate(() => {
@@ -357,12 +371,34 @@ async function testHighlight() {
     ok(hl.total > 0, 'highlight spans exist', `${hl.total}`)
     ok(hl.inside === hl.total, 'every highlight sits inside the canvas', JSON.stringify(hl))
 
+    // Turning the page must leave no highlight from the page just left.
+    //
+    // This polls until the turn completes rather than sleeping a fixed time.
+    // Page turn is canvas render -> text layer render -> requestAnimationFrame
+    // repaint, and under a loaded machine that chain can outlast any single
+    // guessed delay - which showed up as a 2-of-3 flake before polling.
     const afterTurn = await page.evaluate(async () => {
+      const pageBefore = Number(document.getElementById('pgNum').value)
       document.getElementById('pgNext').click()
-      await new Promise((r) => setTimeout(r, 700))
-      return document.querySelectorAll('#pdfTextLayer .hl').length
+      const deadline = Date.now() + 15000
+      while (Date.now() < deadline) {
+        const moved = Number(document.getElementById('pgNum').value) !== pageBefore
+        // The canvas must have been redrawn, or we would be reading the old
+        // layer's highlights and calling them stale.
+        const drawn = window.__renderCount > 0
+        if (moved && drawn && window.__highlightCount === 0) {
+          return { stale: document.querySelectorAll('#pdfTextLayer .hl').length, moved: true }
+        }
+        await new Promise((r) => setTimeout(r, 100))
+      }
+      return {
+        stale: document.querySelectorAll('#pdfTextLayer .hl').length,
+        moved: Number(document.getElementById('pgNum').value) !== pageBefore,
+        timeout: true,
+      }
     })
-    eq(afterTurn, 0, 'highlights are cleared when the page turns')
+    ok(afterTurn.moved, 'page actually turned')
+    eq(afterTurn.stale, 0, 'highlights are cleared when the page turns')
 
     eq(errors.length, 0, 'no console errors', errors.join(' | '))
   })

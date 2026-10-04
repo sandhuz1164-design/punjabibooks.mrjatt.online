@@ -73,6 +73,27 @@
   color: var(--muted);
 }
 
+/* Match highlight, drawn over the text layer.
+ *
+ * Sits above the transparent .textLayer spans but below nothing else; pointer
+ * events are off so the reader can still drag-select across a highlight without
+ * the highlight swallowing the selection. */
+#pdfTextLayer .hl {
+  position: absolute;
+  background: rgba(255, 214, 0, 0.42);
+  border-radius: 2px;
+  mix-blend-mode: multiply;
+  pointer-events: none;
+  z-index: 1;
+}
+
+/* Keyboard focus must be visible on the active match too, so a highlighted
+ * result is not only a colour cue. */
+#pdfTextLayer .hl.is-active {
+  background: rgba(255, 150, 0, 0.55);
+  box-shadow: 0 0 0 2px rgba(180, 90, 0, 0.55);
+}
+
 @media (max-width: 640px) {
   .reader-find {
     order: 3;

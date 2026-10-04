@@ -180,7 +180,7 @@ function reader_body(array $b, string $root = ''): string
 
     $h .= '<script type="module">'
         . 'import * as pdfjsLib from "' . $root . 'assets/vendor/pdfjs/pdf.min.mjs";'
-        . 'import { buildIndex, indexedPages, pagesWithText, pageText, findAll }'
+        . 'import { buildIndex, indexedPages, pagesWithText, pageText, findAll, locateItems }'
         . ' from "' . $root . 'reader-index.js";'
         . 'pdfjsLib.GlobalWorkerOptions.workerSrc = "'
         . $root . 'assets/vendor/pdfjs/pdf.worker.min.mjs";'
@@ -200,12 +200,14 @@ function reader_body(array $b, string $root = ''): string
         . '  window.indexedPages = indexedPages;'
         . '  window.pagesWithText = pagesWithText;'
         . '  window.findAll = findAll;'
+        . '  window.locateItems = locateItems;'
         . '}'
         . 'function runFind(term) {'
         . '  hits = term ? findAll(window.__readerIndex, term, doc ? doc.numPages : 0) : [];'
         . '  hitAt = hits.length ? 0 : -1;'
         . '  paintCount();'
-        . '  if (hitAt >= 0) go(hits[0].page);'
+        . '  if (hitAt >= 0) { if (hits[0].page === page) paintHighlight(hits[0]); else go(hits[0].page); }'
+        . '  else clearHighlights();'
         . '}'
         . 'function paintCount() {'
         . '  findCount.textContent = hits.length'
@@ -216,7 +218,25 @@ function reader_body(array $b, string $root = ''): string
         . '  if (!hits.length) return;'
         . '  hitAt = (hitAt + delta + hits.length) % hits.length;'
         . '  paintCount();'
-        . '  go(hits[hitAt].page);'
+        . '  showHit();'
+        . '}'
+        // Repaint after render() finishes, since the highlight needs both the
+        // fresh text layer and the viewport that render() just computed.
+        . 'function showHit() {'
+        . '  if (hitAt < 0) { clearHighlights(); return; }'
+        . '  const hit = hits[hitAt];'
+        . '  if (hit.page !== page) { go(hit.page); return; }'
+        . '  paintHighlight(hit);'
+        . '}'
+        . 'let repaintPending = false;'
+        . 'function scheduleRepaint() {'
+        // A render started by the reader moving off the active match must not
+        // repaint it: that is what put a stale highlight back on the page just
+        // turned away from. Skip when the active match is no longer on screen.
+        . '  if (hits.length && (hitAt < 0 || hits[hitAt].page !== page)) return;'
+        . '  if (repaintPending) return;'
+        . '  repaintPending = true;'
+        . '  requestAnimationFrame(() => { repaintPending = false; showHit(); });'
         . '}'
         . 'findInput.addEventListener("input", () => runFind(findInput.value.trim()));'
         . 'findInput.addEventListener("keydown", (ev) => {'
@@ -309,10 +329,16 @@ function reader_body(array $b, string $root = ''): string
         . '    task = p.render({ canvasContext: ctx, viewport: vp });'
         . '    await task.promise;'
         . '    task = null;'
+        // Bumped on every completed canvas render. Tests wait on this rather than
+        // guessing a delay: page turn is canvas -> text layer -> rAF repaint, and
+        // that chain is longer than any fixed sleep on a loaded machine.
+        . '    window.__renderCount = (window.__renderCount || 0) + 1;'
         // Selection needs the glyphs as real text. PDF.js paints them to the
         // canvas, so TextLayer re-emits them as transparent positioned spans in
         // an overlay pinned to the canvas box.
         . '    await drawTextLayer(p, vp);'
+        // The text layer was just rebuilt, so an active match must be repainted.
+        . '    scheduleRepaint();'
         . '    zoomEl.textContent = Math.round(scale * 100) + "%";'
         . '  } catch (err) {'
         . '    if (err && err.name === "RenderingCancelledException") return;'
@@ -336,6 +362,49 @@ function reader_body(array $b, string $root = ''): string
         . '  });'
         . '  try { await textTask.render(); }'
         . '  catch (x) { if (!x || x.name !== "RenderingCancelledException") throw x; }'
+        // Stale highlights belong to the page we just left.
+        . '  clearHighlights();'
+        . '}'
+        // PDF.js gives each text item a transform in unscaled PDF user units:
+        // [scaleX, skewX, skewY, scaleY, translateX, translateY]. Only the
+        // scales and translations matter for a highlight rectangle.
+        . 'function paintHighlight(hit) {'
+        . '  const layer = $("pdfTextLayer");'
+        . '  const vp = window.__currentVp;'
+        . '  if (!vp) return;'
+        . '  const pt = window.__readerIndex.get(hit.page);'
+        . '  if (!pt) return;'
+        . '  const idxs = locateItems(pt.items, hit.index, hit.length);'
+        . '  const spans = layer.querySelectorAll("span");'
+        . '  for (const i of idxs) {'
+        // PDF.js creates one span per item, in order, but whitespace items get
+        // no span - so the Nth span is not item N. Map by text content instead.
+        . '    const el = findSpanFor(spans, pt.items, i);'
+        . '    if (!el) continue;'
+        . '    const t = pt.items[i].transform;'
+        . '    if (!t) continue;'
+        . '    const box = document.createElement("span");'
+        . '    box.className = "hl";'
+        . '    box.style.left = (t[4] * vp.scale) + "px";'
+        . '    box.style.top = (t[5] * vp.scale - parseFloat(el.style.fontSize || 0)) + "px";'
+        . '    box.style.width = (t[0] * vp.scale) + "px";'
+        . '    box.style.height = (Math.abs(t[3]) * vp.scale) + "px";'
+        . '    layer.appendChild(box);'
+        . '  }'
+        . '  window.__highlightCount = layer.querySelectorAll(".hl").length;'
+        . '}'
+        . 'function findSpanFor(spans, items, i) {'
+        . '  const want = items[i].str;'
+        . '  for (const el of spans) {'
+        . '    if (el.textContent === want) return el;'
+        . '  }'
+        . '  return null;'
+        . '}'
+        . 'function clearHighlights() {'
+        . '  const layer = $("pdfTextLayer");'
+        . '  if (!layer) return;'
+        . '  for (const el of layer.querySelectorAll(".hl")) el.remove();'
+        . '  window.__highlightCount = 0;'
         . '}'
         . 'function go(n) {'
         . '  if (!doc) return;'

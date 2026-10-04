@@ -72,6 +72,27 @@ export function pageText(map, n) {
 }
 
 /**
+ * Indices of the items a hit covers, given a character offset into the joined
+ * page text.
+ *
+ * The offset can land mid-item, so the first and last items are included even
+ * when the hit starts or ends inside them. Returns [] when nothing overlaps,
+ * which is the honest answer for a hit on a page whose items have since changed.
+ */
+export function locateItems(items, index, length) {
+  const spans = []
+  let acc = 0
+  for (let i = 0; i < items.length; i++) {
+    const start = acc
+    const end = acc + items[i].str.length
+    // Half-open [start, end) joined by a single space between items.
+    if (end > index && start < index + length) spans.push(i)
+    acc = end + JOIN.length
+  }
+  return spans
+}
+
+/**
  * Every occurrence of `term`, as {page, index, length}, sorted by page then
  * position. An empty term matches nothing rather than every position.
  *
