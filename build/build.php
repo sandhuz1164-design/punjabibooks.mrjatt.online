@@ -82,6 +82,9 @@ copy_tree(__DIR__ . '/../fonts', "$PUB/assets/fonts");
 copy_tree(__DIR__ . '/../assets-src/css', "$PUB/assets/css");
 copy_tree(__DIR__ . '/../assets-src/js', "$PUB/assets/js");
 copy_tree(__DIR__ . '/../assets-src/vendor/pdfjs', "$PUB/assets/vendor/pdfjs");
+// reader-index.js is imported by the reader page as a module, so it is copied to
+// the site root under that exact name rather than under assets/js.
+copy(__DIR__ . '/reader-index.js', "$PUB/reader-index.js");
 echo "Assets copied.\n";
 
 function byCategory(array $books, array $cats): array
@@ -375,12 +378,12 @@ foreach ($books as $b) {
     $readerTitle = $title . ' - read online';
     $readerDesc  = 'Read ' . $title . ($author !== '' ? ' by ' . $author : '')
         . ' in the Strand Bookstore reader.';
-    put(
-        "read/" . $slug . ".html",
-        page(
-            $readerTitle,
-            $readerDesc,
-            '<nav class="crumbs" aria-label="Breadcrumb"><a href="' . $root
+        put(
+            "read/" . $slug . ".html",
+            page(
+                $readerTitle,
+                $readerDesc,
+                '<nav class="crumbs" aria-label="Breadcrumb"><a href="' . $root
                 . 'index.html">Library</a> <span aria-hidden="true">&rsaquo;</span> '
                 . '<a href="' . $root . 'books/' . e($slug) . '.html">' . e(clip($title, 60)) . '</a>'
                 . ' <span aria-hidden="true">&rsaquo;</span> Reading</nav>'

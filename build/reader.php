@@ -163,6 +163,8 @@ function reader_body(array $b, string $root = ''): string
 
     $h .= '<script type="module">'
         . 'import * as pdfjsLib from "' . $root . 'assets/vendor/pdfjs/pdf.min.mjs";'
+        . 'import { buildIndex, indexedPages, pagesWithText, pageText }'
+        . ' from "' . $root . 'reader-index.js";'
         . 'pdfjsLib.GlobalWorkerOptions.workerSrc = "'
         . $root . 'assets/vendor/pdfjs/pdf.worker.min.mjs";'
         . 'const CFG = ' . $cfg . ';'
@@ -212,7 +214,20 @@ function reader_body(array $b, string $root = ''): string
         . '    sync();'
         . '    await render();'
         . '    status.hidden = true;'
-        // Readiness flag for tools/t/reader-text.test.mjs.
+        // Search index. Started but deliberately not awaited: the reader is
+        // usable the moment the first page is drawn, and a 300-page scan must
+        // not sit behind a spinner waiting to be indexed.
+        . '    const idxAbort = { aborted: false };'
+        . '    window.__readerDoc = doc;'
+        . '    window.__indexAbort = idxAbort;'
+        . '    window.__readerIndex = new Map();'
+        . '    buildIndex(doc, { signal: idxAbort }).then((m) => {'
+        . '      window.__readerIndex = m;'
+        . '      window.pageText = pageText;'
+        . '      window.indexedPages = indexedPages;'
+        . '      window.pagesWithText = pagesWithText;'
+        . '      window.__indexDone = true;'
+        . '    });'
         . '    window.__readerReady = true;'
         . '  } catch (err) {'
         . '    fail("<p>The book could not be opened ("'
