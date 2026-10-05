@@ -729,6 +729,10 @@ echo "Home...\n";
             [
                 'root' => '',
                 'canonical' => "$SITE/",
+                // Lets the stylesheet drop the sticky-header search on the
+                // homepage at narrow widths, where it duplicated the hero
+                // search directly below it.
+                'body_class' => 'is-home',
                 'nav' => $nav,
                 'active' => 'home',
                 'head' => '<link rel="stylesheet" href="assets/css/testdesign/bookliner.css">' . "\n",

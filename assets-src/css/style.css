@@ -75,6 +75,69 @@ h1, h2, h3 { line-height: 1.22; margin: 0 0 .5em; letter-spacing: -.015em; }
 /* Without this a wide child (the nav) can push the grid past the viewport
    instead of the track shrinking. */
 .head-inner > * { min-width: 0; }
+
+/* ---- narrow header ----------------------------------------------------
+   The three-column grid (brand | search | nav) cannot fit 390px: the `auto`
+   nav track grew, the `1fr` search track collapsed to zero, and the nav
+   wrapped above the brand. Replaced with explicit areas:
+       brand nav
+       search search
+   The nav becomes a single horizontally scrollable strip so all five
+   destinations stay reachable without a menu, and its links get 40px targets
+   (they measured 17px and 34px before). */
+@media (max-width: 720px) {
+  /* Flexbox, not grid areas. The grid version measured a 0px brand track and a
+     nav that wrapped to 94px, because `.head-inner > * { min-width: 0 }` also
+     applies here and let the `auto` brand track collapse while the nav took
+     the whole row. Here the brand is flex:0 0 auto so it keeps its width, and
+     the nav is flex:1 1 0 with min-width:0 so it shrinks and scrolls instead. */
+  .head-inner {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 10px 12px;
+    min-height: 0;
+    padding: 10px 0;
+  }
+  .brand { order: 1; flex: 0 0 auto; white-space: nowrap; }
+  .head-inner .search { order: 3; flex: 1 1 100%; max-width: none; }
+  /* Scoped to .head-inner so it outranks the base .site-nav rule, which sits
+     later in this file and would otherwise re-apply flex-wrap: wrap. */
+  .head-inner .site-nav { order: 2;
+    /* flex-start, not flex-end: in a scrollable flex row, justifying to the end
+       makes the overflowing start unreachable. */
+    flex: 1 1 0;
+    min-width: 0;
+    justify-content: flex-start;
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    overscroll-behavior-x: contain;
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: none;
+    /* Fade the right edge so it reads as scrollable. */
+    mask-image: linear-gradient(to right, #000 calc(100% - 18px), transparent);
+  }
+  .site-nav::-webkit-scrollbar { display: none; }
+  .site-nav > a, .drop > button {
+    min-height: 40px;
+    white-space: nowrap;
+    padding-inline: 10px;
+  }
+  /* The homepage has a large hero search immediately below the header; a
+     second identical field above it is clutter. The search is already
+     flex:1 1 100%, so hiding it leaves the brand and nav alone on one row. */
+  .is-home .search { display: none; }
+}
+
+/* Below 560px the wordmark costs 183px of a 390px row, leaving the nav 195px
+   for 452px of links - two of five destinations visible. The logo mark carries
+   the identity, and the footer still spells the name out in full. */
+@media (max-width: 560px) {
+  .head-inner .brand span { display: none; }
+  .head-inner .brand img { width: 30px; height: 30px; }
+  .head-inner .site-nav > a,
+  .head-inner .drop > button { padding-inline: 8px; }
+}
 .brand { display: inline-flex; align-items: center; gap: 10px; color: var(--ink); font-weight: 700; font-size: 1.06rem; }
 .brand:hover { text-decoration: none; }
 .brand em { font-style: normal; color: var(--brand); }
@@ -665,4 +728,104 @@ mark { background: var(--brand-soft); color: inherit; border-radius: 3px; paddin
    pushing the toolbar to a fifth row. */
 @media (max-width: 720px) {
   .is-reader .src-tag { display: none; }
+}
+
+/* ===================== mobile polish =====================
+   Measured at 390x844 before this block: card-title links 17-34px, book-page
+   action buttons 22px, reader toolbar controls 30px, header nav 17px. All well
+   under the 44px that a thumb needs, and the primary "Read online" button was
+   one of them. */
+@media (max-width: 720px) {
+  /* Standalone controls only. Inline text links - breadcrumbs, the author line -
+     keep their natural line height; padding them to 44px would break the text
+     flow they sit in. */
+  .btn,
+  .chip,
+  .pager a,
+  .pager span,
+  .filter select,
+  .filter input[type="search"],
+  .sortbar button,
+  .search button,
+  .reader-tools button,
+  .reader-tools input,
+  .reader-find button,
+  .reader-find input,
+  /* Scoped like the rules they must beat: `.is-reader .reader-tools button`
+     is 0,2,1 and outranked the unscoped selector above, so the reader's
+     controls stayed at 30px. */
+  .is-reader .reader-tools button,
+  .is-reader .reader-tools input,
+  .is-reader .reader-top .btn-ghost,
+  .is-reader .reader-links a,
+  .is-reader .reader-find button,
+  .is-reader .reader-find input,
+  .is-reader .reader-bottom button,
+  .is-reader .reader-bottom .pg-turn-mid input,
+  .is-reader .reader-tools #pgNum,
+  .is-reader .reader-tools #pgNumB {
+    min-height: 44px;
+  }
+
+  /* The logo mark alone is the home link on narrow screens; give it a real
+     target rather than the 30px box. */
+  .head-inner .brand { min-width: 44px; min-height: 44px; justify-content: center; }
+
+  /* The cover is the card's real tap target; the title is a second link, so it
+     needs its own reach. A height floor rather than padding, so a one-line
+     title and a two-line one both reach 44px instead of 29px and 46px. The
+     negative margin keeps the visual gap to the cover unchanged. */
+  .card-title a {
+    display: block;
+    min-height: 44px;
+    padding-block: 6px;
+    margin-block: -6px;
+  }
+
+  /* Breadcrumbs, the author line and the "view all" link are text links, so
+     they keep their line height and get vertical padding instead - enough reach
+     without breaking the text flow they sit in. */
+  .crumbs a,
+  .book-by a,
+  .more-link a {
+    display: inline-block;
+    padding-block: 9px;
+  }
+
+  /* Cards are links you press, not hover. */
+  .card:active .card-media,
+  .card-media:active {
+    transform: scale(.985);
+  }
+  .card-media { transition: transform .12s ease; }
+
+  /* Notched phones: the reader's sticky page-turn bar and the footer sit under
+     the home indicator without this. */
+  .reader-bottom {
+    padding-bottom: max(10px, env(safe-area-inset-bottom));
+  }
+  .site-foot {
+    padding-bottom: max(18px, env(safe-area-inset-bottom));
+  }
+  /* And the sticky header must not run under the notch. */
+  .site-head { padding-top: env(safe-area-inset-top); }
+
+  /* Rubber-banding the page sideways while reading feels broken. */
+  .reader-shell { overscroll-behavior-x: none; }
+}
+
+/* Highlight colour is a purple box on Android unless removed. */
+a, button, .chip, .card-media {
+  -webkit-tap-highlight-color: rgb(178 46 20 / 14%);
+}
+
+/* Respect a stated preference for less motion - the card lift and the
+   highlight fade are the only animations on the site. */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: .01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: .01ms !important;
+    scroll-behavior: auto !important;
+  }
 }
