@@ -72,6 +72,19 @@ try {
 } catch (Throwable $e) {
     // table not created yet - book pages simply render without this section
 }
+
+/* Descriptions written by reading each book - its title page, contents page and opening
+   text. Not derived from Archive.org metadata, which is empty or boilerplate for 78% of
+   the catalogue. Where the scan was too poor to read, the text says so rather than
+   guessing. */
+$bookSummary = [];
+try {
+    foreach (rows('SELECT PID, Summary FROM book_summary') as $r) {
+        $bookSummary[$r['PID']] = (string) $r['Summary'];
+    }
+} catch (Throwable $e) {
+    // not generated yet
+}
 // ONLY_PID=<pid> builds a single book. Every loop below iterates $books, so this
 // yields a coherent one-book build in under a second instead of the ~4 minutes a
 // full 5,709-book build takes - which is the difference between a testable
@@ -353,20 +366,10 @@ foreach ($books as $b) {
             : '<a href="../authors/' . author_slug($author) . '.html">' . e($author) . '</a>')
         . '</p>';
 
-    /* What the book is actually about, taken from its own opening pages.
-       Deliberately shown as a quotation of the source rather than written as a summary:
-       there is no local language model here, and inventing a description for 5,781 books
-       would be worse than quoting the text. The OCR caveat is stated plainly because it
-       is a real one. */
-    if (isset($bookInfo[$pid]) && !empty($bookInfo[$pid]['Excerpt'])) {
-        $bi = $bookInfo[$pid];
-        $body .= '<section class="sec book-opening">'
-            . '<h2 class="sec-h">From the opening of this book</h2>'
-            . '<blockquote class="book-excerpt">' . e((string) $bi['Excerpt']) . '</blockquote>'
-            . '<p class="ocr-note">This is the opening of the book as text, machine-read from the '
-            . 'scanned original on Archive.org. Old Punjabi printing is scanned poorly, so expect '
-            . 'some errors &mdash; <a href="' . e((string) $bi['TextUrl']) . '" rel="noopener nofollow">'
-            . 'download the full text</a> to read it in full.</p>'
+    if (isset($bookSummary[$pid])) {
+        $body .= '<section class="sec book-about">'
+            . '<h2 class="sec-h">What this book is about</h2>'
+            . '<p class="book-summary">' . e($bookSummary[$pid]) . '</p>'
             . '</section>';
     }
 

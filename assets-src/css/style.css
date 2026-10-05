@@ -979,3 +979,14 @@ a, button, .chip, .card-media {
 @media (max-width: 480px) {
   .book-excerpt { padding: 0.75rem 0.9rem; font-size: 0.94rem; }
 }
+
+/* ---- "what this book is about" ---------------------------------------- */
+
+.book-about { margin: 1.5rem 0; }
+.book-summary {
+  margin: 0;
+  max-width: 70ch;
+  font-size: 1rem;
+  line-height: 1.7;
+  color: var(--ink);
+}
