@@ -185,7 +185,7 @@ function reader_body(array $b, string $root = ''): string
 
     $h .= '<script type="module">'
         . 'import * as pdfjsLib from "' . $root . 'assets/vendor/pdfjs/pdf.min.mjs";'
-        . 'import { buildIndex, indexedPages, pagesWithText, pageText, findAll, locateItems }'
+        . 'import { buildIndex, pageText, findAll, locateItems }'
         . ' from "' . $root . 'reader-index.js";'
         . 'pdfjsLib.GlobalWorkerOptions.workerSrc = "'
         . $root . 'assets/vendor/pdfjs/pdf.worker.min.mjs";'
@@ -207,8 +207,6 @@ function reader_body(array $b, string $root = ''): string
         // controls do, rather than a parallel implementation of it.
         . 'function exposeSearchApi() {'
         . '  window.pageText = pageText;'
-        . '  window.indexedPages = indexedPages;'
-        . '  window.pagesWithText = pagesWithText;'
         . '  window.findAll = findAll;'
         . '  window.locateItems = locateItems;'
         . '}'
@@ -219,7 +217,10 @@ function reader_body(array $b, string $root = ''): string
         // arrives when indexing completes.
         . '  if (!window.__indexDone) {'
         . '    hits = []; hitAt = -1;'
-        . '    findCount.textContent = "searching…";'
+        // Guarded on the term: without this, clearing the box mid-index left
+        // "searching…" in a live region forever, announcing that a reader was
+        // searching for nothing.
+        . '    findCount.textContent = findInput.value.trim() ? "searching…" : "";'
         . '    return;'
         . '  }'
         . '  hits = term ? findAll(window.__readerIndex, term, doc ? doc.numPages : 0) : [];'
@@ -369,8 +370,9 @@ function reader_body(array $b, string $root = ''): string
         . '      window.__readerIndex = m;'
         . '      window.__indexDone = true;'
         . '      settleFindBox();'
-        // A search typed while indexing was still running must now be answered.
-        . '      if (findInput.value) runFind(findInput.value);'
+        // Unconditional: a term typed mid-index must be answered, and an empty
+        // box must be repainted to "" rather than left showing the old text.
+        . '      runFind(findInput.value.trim());'
         . '    });'
         . '    window.__readerReady = true;'
         . '  } catch (err) {'
@@ -396,7 +398,10 @@ function reader_body(array $b, string $root = ''): string
         . '    const base = p.getViewport({ scale: 1 });'
         . '    fit = Math.max(320, stage.clientWidth - 24) / base.width;'
         . '    const vp = p.getViewport({ scale: scale * fit });'
-        . '    window.__currentVp = vp;'
+        // The page this render actually draws. `page` can change while we await
+        // (go() is not blocked), so snapshotting it afterwards recorded the wrong
+        // page and left highlights keyed to a layer that had scrolled away.
+        . '    const drawn = page;'
         . '    const dpr = Math.min(window.devicePixelRatio || 1, 2);'
         . '    canvas.width = Math.floor(vp.width * dpr);'
         . '    canvas.height = Math.floor(vp.height * dpr);'
@@ -417,7 +422,7 @@ function reader_body(array $b, string $root = ''): string
         // Where the page actually landed, as opposed to what was asked for. A turn
         // requested mid-render is deferred (pendingRender), so page can already
         // hold a number this render never drew. Highlights must key off this.
-        . '    window.__renderedPage = page;'
+        . '    window.__renderedPage = drawn;'
         // The text layer was just rebuilt, so an active match must be repainted.
         . '    scheduleRepaint();'
         . '    zoomEl.textContent = Math.round(scale * 100) + "%";'
@@ -457,8 +462,18 @@ function reader_body(array $b, string $root = ''): string
         . '    container: layer,'
         . '    viewport: vp,'
         . '  });'
+        /* PDF.js 4.x TextLayer.cancel() rejects with AbortException, not
+           RenderingCancelledException. Renders are serialised today so this is
+           unreachable, but when it fires the old catch rethrew it into render()'s
+           handler, which also only knew RenderingCancelledException - so it wrote
+           "Page N failed" into the hidden status bar and left a stale
+           __renderedPage behind a silently missing text layer. */
         . '  try { await textTask.render(); }'
-        . '  catch (x) { if (!x || x.name !== "RenderingCancelledException") throw x; }'
+        . '  catch (x) {'
+        . '    const n = x && x.name;'
+        . '    if (n !== "RenderingCancelledException" && n !== "AbortException") throw x;'
+        . '  }'
+        . '  window.__textDivs = textTask.textDivs || null;'
         // Stale highlights belong to the page we just left.
         . '  clearHighlights();'
         . '}'
@@ -480,28 +495,37 @@ function reader_body(array $b, string $root = ''): string
         . '  if (!pt) return;'
         . '  const idxs = locateItems(pt.items, hit.index, hit.length);'
         . '  const spans = spansForItems(pt.items);'
-        . '  for (const i of idxs) {'
-        . '    const el = spans.get(i);'
+        . '  const lr = layer.getBoundingClientRect();'
+        . '  for (const part of idxs) {'
+        . '    const el = spans.get(part.i);'
         . '    if (!el) continue;'
-        // No line comments anywhere in this script: reader.php concatenates it all
-        // onto one line, so a // would comment out everything after it on that
-        // line. That is exactly what happened here - the reader script failed to
-        // parse and every other test failed on a timeout instead of on itself.
-        . '    /* PDF.js has already solved the geometry - ascent, rotation and'
-        . '       horizontal scale - and written the result onto the span. Deriving'
-        . '       a rectangle from the raw transform instead puts the box in the'
-        . '       wrong place: transform[0] is the text matrix scale, not the run'
-        . '       width, and transform[5] is the baseline, not the glyph top. */'
-        . '    const r = el.getBoundingClientRect();'
-        . '    const lr = layer.getBoundingClientRect();'
-        . '    if (!r.width || !r.height) continue;'
-        . '    const box = document.createElement("span");'
-        . '    box.className = "hl";'
-        . '    box.style.left = (r.left - lr.left) + "px";'
-        . '    box.style.top = (r.top - lr.top) + "px";'
-        . '    box.style.width = r.width + "px";'
-        . '    box.style.height = r.height + "px";'
-        . '    layer.appendChild(box);'
+        /* Measure the matched substring, not the whole span.
+           PDF.js has already solved the geometry - ascent, rotation, horizontal
+           scale - and written it onto the span, so copying the span box is exact
+           for a whole-item match. It over-marks by roughly 5x for a partial one:
+           78% of page-1 characters on one measured book sat in items of 30+
+           characters, so a 5-character term highlighted 24. A Range over the
+           span text gives the substring its own box, getClientRects returns one
+           rect per wrapped line, and it stays correct for rotated runs where a
+           transform-derived rectangle would not. */
+        . '    const text = el.firstChild;'
+        . '    if (!text || text.nodeType !== 3) continue;'
+        . '    const lo = Math.max(0, part.start);'
+        . '    const hi = Math.min(text.nodeValue.length, part.end);'
+        . '    if (hi <= lo) continue;'
+        . '    const range = document.createRange();'
+        . '    range.setStart(text, lo);'
+        . '    range.setEnd(text, hi);'
+        . '    for (const r of range.getClientRects()) {'
+        . '      if (!r.width || !r.height) continue;'
+        . '      const box = document.createElement("span");'
+        . '      box.className = "hl";'
+        . '      box.style.left = (r.left - lr.left) + "px";'
+        . '      box.style.top = (r.top - lr.top) + "px";'
+        . '      box.style.width = r.width + "px";'
+        . '      box.style.height = r.height + "px";'
+        . '      layer.appendChild(box);'
+        . '    }'
         . '  }'
         . '  window.__highlightCount = layer.querySelectorAll(".hl").length;'
         . '}'
@@ -513,15 +537,26 @@ function reader_body(array $b, string $root = ''): string
         // content instead - the previous approach - returns the wrong span for any
         // repeated string, such as a running head or a page number.
         . 'function spansForItems(items) {'
+        // PDF.js builds textDivs itself - one entry per item - and we have just
+        // awaited its render, so this is the authoritative, order-exact mapping.
+        // Re-querying the DOM breaks on any PDF with marked content, because
+        // beginMarkedContent inserts span.markedContent wrappers into the DOM but
+        // not into textDivs, shifting every later index by one.
+        . '  const divs = window.__textDivs;'
+        . '  if (Array.isArray(divs) && divs.length >= items.length) {'
+        . '    const out = new Map();'
+        . '    for (let i = 0; i < items.length; i++) out.set(i, divs[i]);'
+        . '    return out;'
+        . '  }'
+        // Fallback for a length mismatch. buildIndex drops str === "" items and
+        // PDF.js does not append spans for them, so the DOM has fewer nodes than
+        // `items`; align on that basis.
         . '  const spans = [...$("pdfTextLayer").querySelectorAll("span:not(.hl)")];'
         . '  const out = new Map();'
-        // Verified against the DOM: PDF.js emits a span for every item, including
-        // whitespace-only ones (page 1 has 30 spans and 30 items, alternating
-        // text and blanks). So the Nth span IS item N, and skipping blanks here
-        // shifted every mapping by one - the highlight for "ਲੇਖਕ" was drawn on
-        // the blank span before it.
-        . '  for (let i = 0; i < items.length && i < spans.length; i++) {'
-        . '    out.set(i, spans[i]);'
+        . '  let k = 0;'
+        . '  for (let i = 0; i < items.length; i++) {'
+        . '    if (!items[i].str.trim()) continue;'
+        . '    if (k < spans.length) out.set(i, spans[k++]);'
         . '  }'
         . '  return out;'
         . '}'

@@ -10,6 +10,9 @@
   display: flex;
   align-items: center;
   gap: 4px;
+  /* Shrinkable, so the row stays one line instead of wrapping the toolbar from
+     50px to 92px at 1280px and below. */
+  flex: 0 1 auto;
   min-width: 0;
 }
 
@@ -17,12 +20,23 @@
   font: inherit;
   font-size: 13px;
   padding: 3px 8px;
-  min-width: 8.5rem;
-  max-width: 14rem;
+  /* A flexible width rather than min/max: the row was 5px too wide at 1280px
+     with a fixed 8.5rem floor, and 3-digit page counts are what push it over. */
+  flex: 0 1 12rem;
+  min-width: 6rem;
   border: 1px solid var(--line);
   border-radius: 6px;
   background: var(--card);
   color: inherit;
+}
+
+/* type="search" gives the field its own clear button. Showing both that and
+   #findClear put two × marks in the toolbar, side by side. Keep the styled one
+   and hide the platform's. */
+#findInput::-webkit-search-cancel-button,
+#findInput::-webkit-search-decoration {
+  -webkit-appearance: none;
+  appearance: none;
 }
 
 #findInput:focus-visible {
@@ -40,10 +54,14 @@
 .find-count {
   font-size: 12px;
   color: var(--muted);
-  min-width: 5.5ch;
+  /* Must not change the toolbar's width as digits change, or the buttons shift
+     under the reader's finger mid-search. 4ch fits "1 of 9" through "1 of 110"
+     closely enough to stop the row wrapping. */
+  min-width: 4.5ch;
   text-align: center;
   white-space: nowrap;
   font-variant-numeric: tabular-nums;
+  flex: 0 0 auto;
 }
 
 .reader-find button {
@@ -93,21 +111,16 @@
   z-index: 1;
 }
 
-/* Keyboard focus must be visible on the active match too, so a highlighted
- * result is not only a colour cue. */
-#pdfTextLayer .hl.is-active {
-  background: rgba(255, 150, 0, 0.55);
-  box-shadow: 0 0 0 2px rgba(180, 90, 0, 0.55);
-}
 
 /* Narrow screens: the find row takes its own full line, below the controls.
  *
- * The desktop toolbar is ~50px and must stay that way, so this does not add a
- * bar - it reflows the existing .reader-top row. Measured heights with the find
- * row in place: 92px desktop, 185px at 375px, 222px at 320px. The mobile figures
- * are higher than the old 151px because search needs a row of its own there;
- * that is a deliberate trade for a usable box and an N-of-M counter rather than
- * a 40px-wide field. */
+ * The desktop toolbar is ~50px and stays that way down to ~1100px. Below that
+ * the row wraps by design, because a 320px screen cannot fit paging, zoom, find
+ * and the download button on one line. Measured heights with the find row in
+ * place: 50px desktop, ~92px at 1280px before the fix, 185px at 375px, 222px at
+ * 320px. The mobile figures are higher than the old 151px because search needs
+ * a row of its own there - a deliberate trade for a usable box and a counter
+ * rather than a 40px-wide field. */
 @media (max-width: 640px) {
   .reader-find {
     order: 3;
