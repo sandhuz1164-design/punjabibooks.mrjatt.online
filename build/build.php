@@ -720,7 +720,12 @@ echo "Home...\n";
         page(
             'Free Punjabi Books to Read Online',
             'Read ' . count($books) . ' free Punjabi books online or download the PDF. No login or payment. Hosted by the Internet Archive.',
-            $body,
+            // Wrapped so the homepage aligns to the same 1180px column as the
+            // header and footer. Without it every section spanned the full
+            // viewport and its heading sat at x=0, so the first letter of
+            // "Most read" and "Top 12 of ..." clipped against the screen edge
+            // while the cards below appeared inset - the two looked misaligned.
+            '<div class="wrap">' . $body . '</div>',
             [
                 'root' => '',
                 'canonical' => "$SITE/",

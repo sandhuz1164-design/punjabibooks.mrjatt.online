@@ -88,7 +88,19 @@ main#main {
   max-width: 60ch;
   margin-inline: auto;
 }
-.hero-search { margin-top: 26px; }
+  /* Flex row so the input fills the form. It was a block at 221px, which
+     truncated "Search title, author or category" to "...or categ" and made it
+     look clipped under the button. */
+  .hero-search {
+    margin-top: 26px;
+    display: flex;
+    gap: 10px;
+  }
+  .hero-search input {
+    flex: 1 1 auto;
+    min-width: 0;
+  }
+  .hero-search button { flex: 0 0 auto; }
 .hero-search input, .hero .search input {
   background: var(--bl-surface);
   border-color: var(--bl-rule);
