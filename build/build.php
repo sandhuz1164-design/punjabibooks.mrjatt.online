@@ -59,6 +59,19 @@ function copy_tree(string $src, string $dst): void
 }
 
 $books = rows("SELECT * FROM products ORDER BY Title");
+
+/* Opening-of-book text recovered from Archive.org's OCR by tools/book-info.php.
+   Only 50% of items produced readable text - the rest are old lithographs whose OCR is
+   character soup - so a book is simply absent from this map when we have nothing usable.
+   Nothing here is generated: it is the book's own opening, cleaned of scan noise. */
+$bookInfo = [];
+try {
+    foreach (rows("SELECT PID, Score, Excerpt, TextUrl FROM book_info") as $r) {
+        $bookInfo[$r['PID']] = $r;
+    }
+} catch (Throwable $e) {
+    // table not created yet - book pages simply render without this section
+}
 // ONLY_PID=<pid> builds a single book. Every loop below iterates $books, so this
 // yields a coherent one-book build in under a second instead of the ~4 minutes a
 // full 5,709-book build takes - which is the difference between a testable
@@ -339,6 +352,23 @@ foreach ($books as $b) {
             ? e($author)
             : '<a href="../authors/' . author_slug($author) . '.html">' . e($author) . '</a>')
         . '</p>';
+
+    /* What the book is actually about, taken from its own opening pages.
+       Deliberately shown as a quotation of the source rather than written as a summary:
+       there is no local language model here, and inventing a description for 5,781 books
+       would be worse than quoting the text. The OCR caveat is stated plainly because it
+       is a real one. */
+    if (isset($bookInfo[$pid]) && !empty($bookInfo[$pid]['Excerpt'])) {
+        $bi = $bookInfo[$pid];
+        $body .= '<section class="sec book-opening">'
+            . '<h2 class="sec-h">From the opening of this book</h2>'
+            . '<blockquote class="book-excerpt">' . e((string) $bi['Excerpt']) . '</blockquote>'
+            . '<p class="ocr-note">This is the opening of the book as text, machine-read from the '
+            . 'scanned original on Archive.org. Old Punjabi printing is scanned poorly, so expect '
+            . 'some errors &mdash; <a href="' . e((string) $bi['TextUrl']) . '" rel="noopener nofollow">'
+            . 'download the full text</a> to read it in full.</p>'
+            . '</section>';
+    }
 
     if ($free) {
         $body .= '<p class="book-free"><span class="tag-free">Free to read</span> No login, no payment.</p>';

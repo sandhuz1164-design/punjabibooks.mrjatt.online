@@ -954,3 +954,28 @@ a, button, .chip, .card-media {
   .coll-grid { grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); }
   .author-profile { padding: 0.9rem 1rem; }
 }
+
+/* ---- opening-of-book excerpt ------------------------------------------ */
+
+.book-opening { margin: 1.5rem 0; }
+.book-excerpt {
+  margin: 0;
+  padding: 0.9rem 1.1rem;
+  border-left: 3px solid var(--brand);
+  background: var(--bg-2);
+  border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
+  font-size: 0.98rem;
+  line-height: 1.7;
+  color: var(--ink);
+}
+.ocr-note {
+  margin: 0.5rem 0 0;
+  font-size: 0.82rem;
+  color: var(--ink-3);
+  line-height: 1.5;
+}
+.ocr-note a { color: var(--brand-dark); }
+
+@media (max-width: 480px) {
+  .book-excerpt { padding: 0.75rem 0.9rem; font-size: 0.94rem; }
+}
