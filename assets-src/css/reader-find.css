@@ -71,6 +71,12 @@
 .find-none {
   font-size: 12px;
   color: var(--muted);
+  /* A flex item defaults to min-width:auto, so its min-content floor competed
+     with #findInput (8.5rem) + counter + three buttons inside a 301px line at
+     320px and pushed the page 10px wide. min-width:0 lets it actually shrink,
+     and anywhere lets its long Archive.org link wrap mid-word. */
+  min-width: 0;
+  overflow-wrap: anywhere;
 }
 
 /* Match highlight, drawn over the text layer.
@@ -106,9 +112,15 @@
   .reader-find {
     order: 3;
     flex: 1 1 100%;
+    min-width: 0;
   }
   #findInput {
     flex: 1 1 auto;
     max-width: none;
+  }
+  /* The notice takes its own line rather than competing for width with the
+     box, the counter and three buttons. */
+  .find-none {
+    flex: 1 1 100%;
   }
 }

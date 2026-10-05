@@ -12,6 +12,13 @@ import { chromium, READER_URL, BASE, require } from '../browser.mjs'
 import { readFileSync } from 'node:fs'
 import { execFileSync } from 'node:child_process'
 
+// Which books have no text layer is a property of the corpus, so it is answered
+// once by tools/t/probe-text-layers.mjs and committed, rather than hunted for at
+// test time. Read at module scope so several groups can use it.
+const HERE = new URL('.', import.meta.url).pathname
+const NO_TEXT_PIDS = JSON.parse(readFileSync(HERE + 'no-text-pids.json', 'utf8'))
+
+
 // Text-layer quality varies wildly between Archive.org scans, so the fixture is
 // chosen for what its PDF actually extracts, not for convenience:
 //
@@ -152,13 +159,41 @@ const phpJsonEncode = (s, flagsExpr) => execFileSync(
   ok(/JSON_HEX_TAG/.test(php), 'reader.php passes JSON_HEX_TAG to json_encode')
 }
 
+// How long to wait for the first page's text layer.
+//
+// Measured on this fixture (380 pages, uncached, streaming from Archive.org):
+// first span at 12.3s, whole group ~30s. So 60s is roughly 5x the signal.
+//
+// Deliberately NOT raised. A 60s timeout reports identically for "Archive.org did
+// not answer" and "the text layer is empty" - and the second is the failure this
+// test exists to catch. So on timeout we report the reader's own status text and
+// any failed requests, which distinguishes the two.
+const SPAN_TIMEOUT_MS = Number(process.env.SPAN_TIMEOUT_MS || 60000)
+
+async function waitForTextLayer(page) {
+  try {
+    await page.waitForSelector('#pdfTextLayer span', { timeout: SPAN_TIMEOUT_MS })
+    return null
+  } catch {
+    return page.evaluate(() => ({
+      status: (document.getElementById('readerStatus') || {}).textContent || '(none)',
+      spans: document.querySelectorAll('#pdfTextLayer span').length,
+      ready: window.__readerReady === true,
+      doc: !!window.__readerDoc,
+    }))
+  }
+}
+
 async function testSelection() {
   console.log('\nselection')
   await withReader(TEXT_PID, async (page, errors) => {
     const layerExists = await page.locator('#pdfTextLayer').count()
     ok(layerExists === 1, 'reader has exactly one #pdfTextLayer', `found ${layerExists}`)
 
-    await page.waitForSelector('#pdfTextLayer span', { timeout: 60000 })
+    const timedOut = await waitForTextLayer(page)
+    ok(timedOut === null,
+      'text layer appeared',
+      timedOut ? JSON.stringify(timedOut) : '')
     const spanCount = await page.locator('#pdfTextLayer span').count()
     ok(spanCount > 0, 'text layer rendered spans', `${spanCount} spans`)
 
@@ -631,20 +666,10 @@ async function testFallback() {
   console.log('\nfallback')
   const { execFileSync } = require('node:child_process')
 
-  // Find a book with no embedded text layer, so the fallback case is real rather
-  // than asserted against a made-up PID.
-  // A book whose PDF carries no extractable text.
-  //
-  // Read from a checked-in fixture rather than hunted for at test time. The
-  // first version of this test opened up to 40 reader pages looking for a
-  // candidate, each waiting on a full index: it ran past 15 minutes and had to be
-  // killed. "Which books lack a text layer" is a property of the corpus, so
-  // tools/t/probe-text-layers.mjs answers it once, on demand, and the answer is
-  // committed. Regenerate with:
+// A book whose PDF carries no extractable text. NO_TEXT_PIDS is read at module
+  // scope; regenerate it with:
   //   node tools/t/probe-text-layers.mjs 24 > tools/t/no-text-pids.json
-  const { readFileSync } = require('node:fs')
-  const here = new URL('.', import.meta.url).pathname
-  const noTextPids = JSON.parse(readFileSync(here + 'no-text-pids.json', 'utf8'))
+  const noTextPids = NO_TEXT_PIDS
 
   ok(noTextPids.length > 0, 'fixture names a readable book with no text layer',
     `${noTextPids.length} such books`)
@@ -652,7 +677,7 @@ async function testFallback() {
   if (noTextPids.length) {
     const noTextPid = noTextPids[0]
     console.log(`  using ${noTextPid}`)
-    await withReader(noTextPid, async (page) => {
+    await withReader(noTextPid, async (page, errors) => {
       await opened(page)
       await page.waitForFunction(() => window.__indexDone === true, null, { timeout: 120000 })
 
@@ -668,23 +693,53 @@ async function testFallback() {
       ok(/no searchable text/i.test(state.noticeText), 'notice says there is no searchable text',
         JSON.stringify(state.noticeText.slice(0, 70)))
       ok(state.hasArchiveLink, 'notice links to Archive.org')
-      ok(!/0 of 0/.test(state.countText),
-        'counter does not masquerade as "0 of 0"', state.countText)
+ok(!/0 of 0/.test(state.countText),
+          'counter does not masquerade as "0 of 0"', state.countText)
+        // The notice is built in JS from CFG.archive, so this path is where a
+        // reference error or a bad link would appear.
+        eq(errors.length, 0, 'no console errors on the no-text book', errors.join(' | '))
+      })
+    }
+
+  // The false-positive direction: a book WITH text must not get the notice.
+await withReader(TEXT_PID, async (page, errors) => {
+      await opened(page)
+      await page.waitForFunction(() => window.__indexDone === true, null, { timeout: 120000 })
+      const state = await page.evaluate(() => ({
+        disabled: document.getElementById('findInput').disabled,
+        noticeShown: !document.getElementById('findNone').hidden,
+      }))
+      ok(!state.disabled, 'find box stays enabled for a book that has text')
+      ok(!state.noticeShown, 'notice stays hidden for a book that has text')
+      eq(errors.length, 0, 'no console errors on the text book', errors.join(' | '))
     })
   }
 
-  // The false-positive direction: a book WITH text must not get the notice.
-  await withReader(TEXT_PID, async (page) => {
-    await opened(page)
-    await page.waitForFunction(() => window.__indexDone === true, null, { timeout: 120000 })
-    const state = await page.evaluate(() => ({
-      disabled: document.getElementById('findInput').disabled,
-      noticeShown: !document.getElementById('findNone').hidden,
-    }))
-    ok(!state.disabled, 'find box stays enabled for a book that has text')
-    ok(!state.noticeShown, 'notice stays hidden for a book that has text')
-  })
-}
+  // No horizontal overflow at the narrowest supported width, on BOTH cases.
+  //
+  // Measured once on the text fixture only, which is the one book where the
+  // fallback notice is hidden and therefore cannot push the layout. The notice is
+  // a flex item with default min-width:auto, so its min-content floor overflowed
+  // 320px by 10px - invisible to a check that never showed it.
+  for (const [label, pid] of [
+    ['text book (notice hidden)', TEXT_PID],
+    ['no-text book (notice shown)', NO_TEXT_PIDS[0]],
+  ]) {
+    await withReader(pid, async (page, errors) => {
+      await opened(page)
+      await page.waitForFunction(() => window.__indexDone === true, null, { timeout: 120000 })
+      await page.waitForTimeout(300)
+      const box = await page.evaluate(() => ({
+        scrollW: document.documentElement.scrollWidth,
+        clientW: document.documentElement.clientWidth,
+        noticeShown: !document.getElementById('findNone').hidden,
+      }))
+      ok(box.scrollW <= box.clientW,
+        `no horizontal overflow at 320px on the ${label}`,
+        `scrollW ${box.scrollW} > clientW ${box.clientW}, noticeShown=${box.noticeShown}`)
+      eq(errors.length, 0, `no console errors at 320px (${label})`, errors.join(' | '))
+    })
+  }
 
 // --------------------------------------------------------------------- main
 
