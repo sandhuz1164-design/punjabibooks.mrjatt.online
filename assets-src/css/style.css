@@ -730,6 +730,15 @@ mark { background: var(--brand-soft); color: inherit; border-radius: 3px; paddin
   .is-reader .src-tag { display: none; }
 }
 
+/* The reader toolbar is one row by design (~50px). At 1200px its content was
+   1212px + 24px of gaps against 1181px of usable width, so it wrapped to 92px.
+   The src-tag badge is 86px of purely informational text - "streaming" versus
+   "on this device" - and is the cheapest thing to give up: the download button
+   beside it already tells the reader the file is not local. */
+@media (max-width: 1279px) {
+  .is-reader .reader-links .src-tag { display: none; }
+}
+
 /* ===================== mobile polish =====================
    Measured at 390x844 before this block: card-title links 17-34px, book-page
    action buttons 22px, reader toolbar controls 30px, header nav 17px. All well

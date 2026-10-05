@@ -278,11 +278,16 @@ function reader_body(array $b, string $root = ''): string
         . '  const base = hits.length'
         . '    ? (hitAt + 1) + " of " + hits.length'
         . '    : "No matches";'
-        // Say so when pages were skipped. "No matches" on a book where 40 of
-        // 380 pages could not be read is a claim the reader cannot verify.
-        . '  findCount.textContent = unreadable.size && window.__indexDone'
-        . '    ? base + " (" + unreadable.size + " pages unreadable)"'
-        . '    : base;'
+        // Say what was actually searched. Two ways coverage can be partial, and
+        // both used to be silent - "No matches" on an unsearched page is a claim
+        // the reader cannot check.
+        . '  const parts = [base];'
+        . '  if (window.__indexDone) {'
+        . '    const seen = window.__readerIndex.size;'
+        . '    if (seen < doc.numPages) parts.push("first " + seen + " of " + doc.numPages + " pages");'
+        . '    if (unreadable.size) parts.push(unreadable.size + " unreadable");'
+        . '  }'
+        . '  findCount.textContent = parts.join(" · ");'
         . '}'
         . 'function step(delta) {'
         . '  if (!hits.length) return;'

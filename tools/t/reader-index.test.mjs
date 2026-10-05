@@ -179,6 +179,20 @@ console.log('\nlocateItems')
   ok(part[0].end - part[0].start === 5, 'the range is the term width, not the item width')
 }
 
+{
+  // The index is capped so opening a book does not fetch all of it from a free
+  // service. The cap must be honoured, and the caller must be able to tell that
+  // coverage was partial - otherwise "No matches" becomes an unfalsifiable claim
+  // about pages nobody looked at.
+  const doc40 = stubDoc(Array.from({ length: 40 }, () => [item('x')]))
+  eq((await buildIndex(doc40)).size, 40, 'a short book is indexed whole')
+  const capped = await buildIndex(doc40, { maxPages: 10 })
+  eq(capped.size, 10, 'maxPages stops the walk')
+  ok(doc40.numPages > capped.size, 'the caller can detect partial coverage by size')
+  ok((await buildIndex(doc40, { maxPages: 10 })).size
+     < (await buildIndex(doc40)).size, 'partial coverage is strictly less than full')
+}
+
 console.log(`\n${pass} passed, ${fail} failed`)
 if (fail) {
   console.log('failed: ' + failures.join('; '))

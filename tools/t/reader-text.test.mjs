@@ -359,7 +359,13 @@ async function testIndex() {
       })(),
     }))
 
-    eq(info.size, info.numPages, 'index has an entry for every page')
+    eq(info.size, Math.min(info.numPages, 250),
+      'index covers every page up to the cap')
+    ok(info.size <= info.numPages, 'index never exceeds the page count')
+    ok(info.numPages > info.size
+      ? await page.evaluate(() => window.__readerIndex.size < window.__readerDoc.numPages)
+      : true,
+      'a book longer than the cap is detectable as partially covered')
     ok(info.firstLen > 0, 'page 1 has extracted text', `${info.firstLen} chars`)
     ok(info.blankIsEmptyString, 'out-of-range page reads as empty string, not undefined')
     ok(info.hasItems, 'page 1 kept its text items')
@@ -514,10 +520,36 @@ async function testFind() {
       eq(navigated.start, navigated.p1, 'typing already jumped to match 1')
       eq(navigated.after1, navigated.p2, 'findNext advances to match 2')
       eq(navigated.back, navigated.start, 'findPrev returns to match 1')
-      ok(/^2 of \d+$/.test(navigated.labelAfter1), 'counter reads 2 after one step',
+      // The counter may carry a coverage suffix once indexing finishes
+      // ("2 of 48 · first 250 of 380 pages"), so match the head of the label.
+      ok(/^2 of \d+/.test(navigated.labelAfter1), 'counter reads 2 after one step',
         navigated.labelAfter1)
-      ok(/^1 of \d+$/.test(navigated.labelAfterPrev), 'counter reads 1 after stepping back',
+      ok(/^1 of \d+/.test(navigated.labelAfterPrev), 'counter reads 1 after stepping back',
         navigated.labelAfterPrev)
+      // And the suffix must not appear before the index is ready.
+      ok(!/·/.test(navigated.labelAfter1) || /pages|unreadable/.test(navigated.labelAfter1),
+        'any counter suffix explains itself', navigated.labelAfter1)
+    }
+
+    // Coverage must be stated, not implied. The index is capped at 250 pages,
+    // so this 380-page book is searched only in part - and "No matches" on an
+    // unsearched page is a claim the reader cannot check. The counter has to say
+    // which pages were actually read.
+    const coverage = await page.evaluate(() => ({
+      n: window.__readerDoc.numPages, seen: window.__readerIndex.size,
+    }))
+    await page.fill('#findInput', '\u0a38\u0a3f\u0a30\u0a3e\u0a17')
+    await page.waitForFunction(() => /\d+ of \d+/.test(
+      document.getElementById('findCount').textContent), null, { timeout: 20000 })
+    const label = await page.textContent('#findCount')
+    if (coverage.seen < coverage.n) {
+      ok(/first \d+ of \d+ pages/.test(label),
+        'a partially indexed book says which pages were searched', label)
+      ok(label.includes(String(coverage.seen)) && label.includes(String(coverage.n)),
+        'the coverage figures match the real index', label)
+    } else {
+      ok(!/first \d+ of \d+ pages/.test(label),
+        'a fully indexed book makes no coverage claim', label)
     }
 
     // Escape and the clear button must both empty the search.

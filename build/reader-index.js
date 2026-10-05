@@ -14,16 +14,25 @@
 /** Join rule used everywhere an offset must map back onto items. */
 export const JOIN = ' '
 
+// Walking every page means fetching the whole book in the background: a 674-page
+// scan is ~1,350 byte-range requests against a free service, on every uncached
+// open. Capped, and the reader is told the real coverage rather than implying it
+// searched everything.
+export const DEFAULT_MAX_PAGES = 250
+
 /**
- * Walk every page and extract its text.
+ * Walk pages and extract their text.
  *
  * Serialised on purpose: one getPage in flight at a time. A Promise.all over a
  * 300-page book would open 300 simultaneous range requests against Archive.org
  * and stall the reader behind them.
+ *
+ * Stops after `maxPages`; the caller compares the map's size with doc.numPages
+ * to show what was actually covered.
  */
-export async function buildIndex(doc, { onPage, signal } = {}) {
+export async function buildIndex(doc, { maxPages = DEFAULT_MAX_PAGES, onPage, signal } = {}) {
   const map = new Map()
-  const total = doc.numPages
+  const total = Math.min(doc.numPages, maxPages)
 
   for (let n = 1; n <= total; n++) {
     if (signal && signal.aborted) break
