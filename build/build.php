@@ -2,6 +2,8 @@
 require_once __DIR__ . '/../db.php';
 require_once __DIR__ . '/layout.php';
 require_once __DIR__ . '/reader.php';
+require_once __DIR__ . '/collections.php';
+require_once __DIR__ . '/../tools/author-normalise.php';
 
 $PUB = __DIR__ . '/../public';
 $ASSETS = __DIR__ . '/../assets';
@@ -131,6 +133,30 @@ function bySubject(array $books): array
 
 $byCat = byCategory($books, $cats);
 $byAuthor = byAuthor($books);
+
+/* Collection membership, computed once. Both the author pages and the collection pages
+   need it, and matching 5,781 books against every collection twice is pure waste.
+   $COLL is slug => ['meta' => ..., 'books' => ...]; $bookColl is PID => [slug, ...]. */
+$COLL = [];
+$bookColl = [];
+$COLL_MIN = 30;
+foreach (collections() as $cslug => $cmeta) {
+    $terms = array_map('mb_strtolower', $cmeta['terms']);
+    $hits = [];
+    foreach ($books as $b) {
+        $blob = mb_strtolower(($b['Title'] ?? '') . ' ' . ($b['Subject'] ?? '') . ' ' . ($b['Author'] ?? ''));
+        foreach ($terms as $term) {
+            if ($term !== '' && str_contains($blob, $term)) {
+                $hits[] = $b;
+                $bookColl[$b['PID']][] = $cslug;
+                break;
+            }
+        }
+    }
+    if (count($hits) >= $COLL_MIN) {
+        $COLL[$cslug] = ['meta' => $cmeta, 'books' => $hits];
+    }
+}
 $bySubject = bySubject($books);
 
 // Subject slugs can only be assigned once every heading is known, otherwise a
@@ -306,7 +332,13 @@ foreach ($books as $b) {
     }
     $body .= '<div class="book-main">'
         . '<h1>' . e($title) . '</h1>'
-        . '<p class="book-by">by <a href="../authors/' . author_slug($author) . '.html">' . e($author) . '</a></p>';
+        // Non-person values ("Unknown", uploader names) get no author page, so linking to
+        // one would be a dead link on every book they touch.
+        . '<p class="book-by">by '
+        . (isNonPersonAuthor((string) $author)
+            ? e($author)
+            : '<a href="../authors/' . author_slug($author) . '.html">' . e($author) . '</a>')
+        . '</p>';
 
     if ($free) {
         $body .= '<p class="book-free"><span class="tag-free">Free to read</span> No login, no payment.</p>';
@@ -479,6 +511,10 @@ echo "Author pages (" . count($byAuthor) . ")...\n";
 $authorPageCounts = [];
 foreach ($byAuthor as $author => $list) {
     usort($list, fn($x, $y) => (float) $x['Price'] <=> (float) $y['Price']);
+    // "Unknown" and uploader names are not people; a page for them is a dead end.
+    if (isNonPersonAuthor((string) $author)) {
+        continue;
+    }
     $base = 'authors/' . author_slug((string) $author);
     $total = count($list);
     $pages = max(1, (int) ceil($total / CATALOGUE_PER_PAGE));
@@ -514,7 +550,109 @@ foreach ($byAuthor as $author => $list) {
             array_keys($scriptCounts),
             $catLabels
         );
-        $body = $crumbs . $body;
+
+        /* An author profile, but only for authors with enough books to justify one.
+           Everything here is derived from the catalogue itself - no invented biography.
+           Wikidata was tried as a source and abandoned: it has no entity for even Bhai
+           Kahn Singh Nabha or Giani Gurmukh Singh Musafir, and no portraits at all, so
+           a generated "about" would have been thinner than these plain facts. */
+        $profile = '';
+        if ($p === 1 && $total >= 4 && !isNonPersonAuthor((string) $author)) {
+            $years = [];
+            $subj = [];
+            $authorCats = [];   // not $cats: that is the global category list
+            $gurmukhi = 0;
+            foreach ($list as $b) {
+                if ((int) ($b['Year'] ?? 0) > 0) {
+                    $years[] = (int) $b['Year'];
+                }
+                foreach (array_filter(array_map('trim', explode(',', (string) ($b['Subject'] ?? '')))) as $s) {
+                    if ($s !== '') {
+                        $subj[$s] = ($subj[$s] ?? 0) + 1;
+                    }
+                }
+                if (preg_match('/[\x{0A00}-\x{0A7F}]/u', (string) ($b['Title'] ?? ''))) {
+                    $gurmukhi++;
+                }
+                if (!empty($b['Category'])) {
+                    $authorCats[(string) $b['Category']] = ($authorCats[(string) $b['Category']] ?? 0) + 1;
+                }
+            }
+            arsort($subj);
+            arsort($authorCats);
+
+            $era = '';
+            $spread = false;
+            if ($years) {
+                sort($years);
+                $lo = min($years);
+                $hi = max($years);
+                $spread = $lo !== $hi;
+                $era = $spread ? $lo . '-' . $hi : (string) $lo;
+            }
+
+            /* $bookColl holds every collection a book matched, including the ones below
+               the 30-book floor that get no page. Only link collections that exist. */
+            $collSlugs = [];
+            foreach ($list as $b) {
+                foreach ($bookColl[$b['PID']] ?? [] as $cs) {
+                    if (isset($COLL[$cs])) {
+                        $collSlugs[$cs] = ($collSlugs[$cs] ?? 0) + 1;
+                    }
+                }
+            }
+            arsort($collSlugs);
+
+            $facts = [$total . ' book' . ($total === 1 ? '' : 's') . ' in this library'];
+            if ($era !== '') {
+                $facts[] = ($spread ? 'published ' : 'dated ') . $era;
+            }
+            if ($gurmukhi > 0) {
+                $facts[] = $gurmukhi . ' of them in Gurmukhi';
+            }
+            $scriptNote = ($gurmukhi > 0 && $gurmukhi < $total)
+                ? ' The Gurmukhi titles are Gurmukhi editions of the same works.'
+                : '';
+
+            $profile = '<section class="sec author-profile">'
+                . '<h2 class="sec-h">About this author</h2>'
+                . '<p class="author-facts">' . e(ucfirst(implode(', ', $facts))) . '.</p>'
+                . '<p class="author-note">These details come from the catalogue record. We have '
+                . 'not added a biography: we could not find a reliable one, and an invented one '
+                . 'would be worse than none.' . $scriptNote . '</p>';
+
+            /* Categories, not the raw Subject field. Archive.org subjects are
+               per-article strings like "ਕੈਨੇਡਾ ਵਿੱਚ ਪੰਜਾਬੀ ਪੱਤਰਕਾਰੀ", which are far too fine-grained to be
+               useful as a subject list on a page. */
+            if ($authorCats) {
+                $profile .= '<h3 class="sub-h">Categories</h3><div class="chips">';
+                $i = 0;
+                foreach ($authorCats as $cl => $n) {
+                    if ($i++ >= 6) {
+                        break;
+                    }
+                    $profile .= '<a class="chip" href="../browse/' . cat_slug((string) $cl) . '.html">'
+                        . e((string) $cl) . '<span class="n">' . $n . '</span></a>';
+                }
+                $profile .= '</div>';
+            }
+
+            if ($collSlugs) {
+                $profile .= '<h3 class="sub-h">Appears in</h3><div class="chips">';
+                $i = 0;
+                foreach ($collSlugs as $cs => $n) {
+                    if ($i++ >= 6) {
+                        break;
+                    }
+                    $profile .= '<a class="chip" href="../collections/' . $cs . '.html">'
+                        . e($COLL[$cs]['meta']['label'] ?? $cs) . '<span class="n">' . $n . '</span></a>';
+                }
+                $profile .= '</div>';
+            }
+            $profile .= '</section>';
+        }
+
+        $body = $crumbs . $profile . $body;
 
         put(
             $file,
@@ -636,9 +774,11 @@ echo "Subjects index...\n";
 /* ---------------- authors index ---------------- */
 echo "Authors index...\n";
 {
+    // "Unknown" and uploader names are not people and get no page of their own.
+    $realAuthors = array_values(array_filter(array_keys($byAuthor), static fn($x) => !isNonPersonAuthor((string) $x)));
     $body = '<h1 class="page-h1">Authors</h1>'
-        . '<p class="lede">' . count($byAuthor) . ' authors in the catalogue.</p><div class="chips">';
-    foreach (array_keys($byAuthor) as $a) {
+        . '<p class="lede">' . count($realAuthors) . ' authors in the catalogue.</p><div class="chips">';
+    foreach ($realAuthors as $a) {
         $body .= '<a class="chip" href="authors/' . author_slug((string) $a) . '.html">' . e((string) $a)
             . '<span class="n">' . count($byAuthor[$a]) . '</span></a>';
     }
@@ -652,6 +792,143 @@ echo "Authors index...\n";
             ['root' => '', 'canonical' => "$SITE/authors.html", 'nav' => $nav, 'active' => 'authors']
         )
     );
+}
+
+/* ---------------- collections ---------------- */
+echo "Collections...\n";
+{
+    // A collection under the floor is not a browse section - it is a rounding error with
+    // a heading. $COLL already dropped those; they stay in collections.php so they light
+    // up as the catalogue grows.
+    $built = $COLL;
+    foreach ($built as $slug => $c) {
+        printf("  %-26s %4d books\n", $c['meta']['label'], count($c['books']));
+    }
+
+    $byDownloads = static function (array $list): array {
+        usort($list, fn($a, $b) => ((int) ($b['Downloads'] ?? 0)) <=> ((int) ($a['Downloads'] ?? 0)));
+        return $list;
+    };
+
+    /* index */
+    $covered = [];
+    foreach ($built as $c) {
+        foreach ($c['books'] as $b) {
+            $covered[(string) $b['PID']] = true;
+        }
+    }
+    $body = '<h1 class="page-h1">Collections</h1>'
+        . '<p class="lede">Themed ways into the catalogue, for readers who know what they are '
+        . 'looking for. ' . count($built) . ' collections over '
+        . count($covered)
+        . ' books.</p>';
+    foreach ($built as $slug => $c) {
+        $body .= '<div class="coll-card">'
+            . '<h2 class="coll-h"><a href="collections/' . $slug . '.html">'
+            . e($c['meta']['label']) . '</a></h2>'
+            . '<p class="coll-blurb">' . e($c['meta']['blurb']) . '</p>'
+            . '<p class="coll-n">' . count($c['books']) . ' books</p>'
+            . '</div>';
+    }
+    $body .= '<p class="lede note">These sit alongside the '
+        . '<a href="catalogue.html">full catalogue</a> and the '
+        . '<a href="subjects.html">subject list</a>. A book can appear in several '
+        . 'collections - a Gutka is both a Gurdwara publication and Sikh Gurmat.</p>';
+    put('collections.html', page(
+        'Collections',
+        'Browse ' . count($built) . ' themed collections of free Punjabi books at Strand Bookstore.',
+        $body,
+        ['root' => '', 'canonical' => "$SITE/collections.html", 'nav' => $nav, 'active' => 'collections']
+    ));
+
+    /* one page per collection */
+    foreach ($built as $slug => $c) {
+        $meta = $c['meta'];
+        $label = $meta['label'];
+
+        $inner = '<nav class="crumbs"><a href="../index.html">Library</a> '
+            . '<span aria-hidden="true">&rsaquo;</span> <a href="../collections.html">Collections</a> '
+            . '<span aria-hidden="true">&rsaquo;</span> ' . e($label) . '</nav>'
+            . '<h1 class="page-h1">' . e($label) . '</h1>'
+            . '<p class="lede">' . e($meta['blurb']) . ' ' . count($c['books']) . ' books.</p>'
+            . '<div class="prose"><p>' . e($meta['intro']) . '</p></div>';
+
+        /* sibling collections, so a reader who arrived for martyrs can reach history */
+        $rel = array_values(array_filter($meta['related'] ?? [], fn($r) => isset($built[$r])));
+        if ($rel) {
+            $inner .= '<section class="sec"><h2 class="sec-h">Related collections</h2><div class="chips">';
+            foreach ($rel as $r) {
+                $inner .= '<a class="chip" href="' . $r . '.html">' . e($built[$r]['meta']['label'])
+                    . '<span class="n">' . count($built[$r]['books']) . '</span></a>';
+            }
+            $inner .= '</div></section>';
+        }
+
+        /* People named in the intro, resolved against the catalogue's own author index.
+           Only real, page-having authors are candidates: matching "www.DiscoverSikhism.com"
+           produced a link to an author page that is deliberately not generated. The
+           substring tests also need a length floor on BOTH sides, or a one-word author
+           matches almost any name. */
+        $found = [];
+        foreach ($meta['people'] ?? [] as $person) {
+            $needle = mb_strtolower($person);
+            if (mb_strlen($needle) < 4) {
+                continue;
+            }
+            foreach ($byAuthor as $a => $list) {
+                if (isNonPersonAuthor((string) $a)) {
+                    continue;
+                }
+                /* Substring matching was wrong here: for "Bhai Jodh Singh" it happily
+                   matched the author "H Singh", and for "Darshan Singh" it matched
+                   "Awara Darshan Singh". Require the catalogue name's tokens to be a
+                   subset of the person's tokens instead, so a title may be added but a
+                   different given name may not. */
+                $aTokens = authorTokens((string) $a);
+                $pTokens = authorTokens($person);
+                if (!$aTokens || !$pTokens) {
+                    continue;
+                }
+                if (!array_diff($aTokens, $pTokens)) {
+                    $found[$a] = $list;
+                    break;
+                }
+            }
+        }
+        if ($found) {
+            $inner .= '<section class="sec"><h2 class="sec-h">Key figures in this collection</h2><div class="chips">';
+            foreach ($found as $a => $list) {
+                $inner .= '<a class="chip" href="../authors/' . author_slug((string) $a) . '.html">'
+                    . e((string) $a) . '<span class="n">' . count($list) . '</span></a>';
+            }
+            $inner .= '</div></section>';
+        }
+
+        $inner .= '<h2 class="sec-h">All ' . count($c['books']) . ' books</h2><div class="grid">';
+        $i = 0;
+        foreach ($byDownloads($c['books']) as $b) {
+            $inner .= card($b, '../', $i < 6);
+            $i++;
+        }
+        $inner .= '</div>';
+
+        /* verified external references - every URL here returned HTTP 200 when checked */
+        if (!empty($meta['refs'])) {
+            $inner .= '<section class="sec"><h2 class="sec-h">Read more</h2><ul class="reflist">';
+            foreach ($meta['refs'] as [$url, $text]) {
+                $inner .= '<li><a href="' . e($url) . '" rel="noopener nofollow">' . e($text)
+                    . '</a> <span class="ext">&#8599;</span></li>';
+            }
+            $inner .= '</ul></section>';
+        }
+
+        put('collections/' . $slug . '.html', page(
+            $label,
+            $meta['blurb'] . ' ' . count($c['books']) . ' free Punjabi books.',
+            $inner,
+            ['root' => '../', 'canonical' => "$SITE/collections/$slug.html", 'nav' => $nav]
+        ));
+    }
 }
 
 /* ---------------- home ---------------- */
@@ -697,6 +974,18 @@ echo "Home...\n";
             . '<span class="n">' . (int) $c['count'] . '</span></a>';
     }
     $body .= '</div></section>';
+
+    $body .= '<section class="sec"><h2 class="sec-h">Collections</h2>'
+        . '<p class="sec-sub">Curated reading paths through the catalogue.</p>'
+        . '<div class="coll-grid">';
+    foreach ($built as $slug => $c) {
+        $body .= '<a class="coll-tile" href="collections/' . $slug . '.html">'
+            . '<span class="coll-tile-h">' . e($c['meta']['label']) . '</span>'
+            . '<span class="coll-tile-n">' . count($c['books']) . ' books</span></a>';
+    }
+    $body .= '</div>'
+        . '<p class="more-link"><a class="btn-ghost" href="collections.html">All collections</a></p>'
+        . '</section>';
 
     $body .= '<section class="sec"><h2 class="sec-h">Browse by author</h2><div class="chips">';
     foreach ($popularAuthors as $a) {

@@ -838,3 +838,119 @@ a, button, .chip, .card-media {
     scroll-behavior: auto !important;
   }
 }
+
+/* ---- collections ------------------------------------------------------ */
+
+.prose {
+  max-width: 68ch;
+  margin: 0 0 1.75rem;
+}
+.prose p {
+  margin: 0;
+  color: var(--ink-2);
+  line-height: 1.65;
+}
+
+.sec-sub {
+  margin: -0.35rem 0 1rem;
+  color: var(--ink-3);
+  font-size: 0.95rem;
+}
+
+.sub-h {
+  margin: 1.5rem 0 0.6rem;
+  font-size: 0.82rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+}
+
+/* Collections index: one card per collection, not a bare chip list. */
+.coll-card {
+  padding: 1rem 0;
+  border-bottom: 1px solid var(--line);
+}
+.coll-card:last-child { border-bottom: 0; }
+.coll-h {
+  margin: 0 0 0.2rem;
+  font-size: 1.1rem;
+}
+.coll-h a { color: inherit; }
+.coll-blurb {
+  margin: 0 0 0.3rem;
+  color: var(--ink-2);
+}
+.coll-n {
+  margin: 0;
+  font-size: 0.82rem;
+  color: var(--ink-3);
+  font-variant-numeric: tabular-nums;
+}
+.lede.note {
+  margin-top: 1.75rem;
+  font-size: 0.92rem;
+  color: var(--ink-3);
+}
+
+/* Homepage collection tiles. */
+.coll-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+  gap: 0.6rem;
+}
+.coll-tile {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+  padding: 0.7rem 0.85rem;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--card);
+  color: inherit;
+  text-decoration: none;
+}
+.coll-tile:hover { border-color: var(--brand); }
+.coll-tile-h { font-weight: 600; font-size: 0.95rem; line-height: 1.25; }
+.coll-tile-n { font-size: 0.78rem; color: var(--ink-3); font-variant-numeric: tabular-nums; }
+
+/* ---- author profile --------------------------------------------------- */
+
+.author-profile {
+  padding: 1.1rem 1.2rem;
+  margin-bottom: 1.75rem;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--card);
+}
+.author-facts {
+  margin: 0 0 0.4rem;
+  font-size: 1.02rem;
+}
+.author-note {
+  margin: 0;
+  font-size: 0.88rem;
+  color: var(--ink-3);
+  line-height: 1.55;
+}
+.author-profile .chips { margin-top: 0.4rem; }
+
+/* ---- external references --------------------------------------------- */
+
+.reflist {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: grid;
+  gap: 0.4rem;
+}
+.reflist li { font-size: 0.95rem; }
+.reflist .ext {
+  color: var(--ink-3);
+  font-size: 0.8em;
+}
+
+@media (max-width: 480px) {
+  .coll-grid { grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); }
+  .author-profile { padding: 0.9rem 1rem; }
+}

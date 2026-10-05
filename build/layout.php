@@ -475,6 +475,7 @@ function header_html(string $root, array $nav, string $active): string
     }
     $h .= '</div></div>'
         . '<a href="' . $root . 'catalogue.html"' . ($active === 'catalogue' ? ' class="on"' : '') . '>All books</a>'
+        . '<a href="' . $root . 'collections.html"' . ($active === 'collections' ? ' class="on"' : '') . '>Collections</a>'
         . '<a href="' . $root . 'authors.html"' . ($active === 'authors' ? ' class="on"' : '') . '>Authors</a>'
         . '<a href="' . $root . 'subjects.html"' . ($active === 'subjects' ? ' class="on"' : '') . '>Subjects</a>'
         . '</nav></div></header>';
